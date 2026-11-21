@@ -87,7 +87,7 @@ def main(stage, day):
     if stage == "mints":
         for i, m in enumerate(grads + non):
             r = mint_page(L[m])
-            if len(r["data"]) >= 100:  # page does not cover the first hour: use the deployer ATA trace (study-1 method)
+            if len(r["data"]) >= 100 and L[m].get("dev_ata"):  # page does not cover the first hour: use the deployer ATA trace (study-1 method)
                 trace(L[m]["dev_ata"], L[m]["t0"])
             if i % 50 == 0:
                 print("mints", i, "calls", client.calls_used(), flush=True)

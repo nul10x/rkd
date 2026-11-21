@@ -97,8 +97,11 @@ def part_a(day, L, grads, non):
             continue
         txs = pg["data"]
         row.update(P.block0(txs, l))
-        src = txs if len(txs) < 100 else ata_trace(l["dev_ata"], l["t0"])
-        row["dev_exit_source"] = "mint_page" if len(txs) < 100 else ("ata_trace" if src is not None else "missing")
+        if not l.get("dev_ata"):  # no dev buy: no deployer holding to exit (collector fix 2026-11-21)
+            src, row["dev_exit_source"] = None, "no_dev_buy"
+        else:
+            src = txs if len(txs) < 100 else ata_trace(l["dev_ata"], l["t0"])
+            row["dev_exit_source"] = "mint_page" if len(txs) < 100 else ("ata_trace" if src is not None else "missing")
         if src is not None:
             ex = P.dev_exit(src, l, H)
             row["dev_exit_1h"] = ex is not None
