@@ -181,7 +181,30 @@ def main():
         "dev_full_exit_1h": newcombe_diff(pf["dev_full_exit_1h_random_dead"]["k"], pf["dev_full_exit_1h_random_dead"]["n"],
                                           po["dev_full_exit_1h"]["k"], po["dev_full_exit_1h"]["n"]),
     }
-    out["peaks_measured"] = load("xchain_peaks_{}.json".format(DAY_STR))
+    pk = load("xchain_peaks_{}.json".format(DAY_STR))
+    out["peaks_measured"] = pk
+    # Pre-registered in KR-000010: Runner_100k / Runner_1M = 7-day peak MC >= $100k / $1M (graduates only);
+    # Rug (price) = last 7-day close <= 10% of the 7-day peak. Graduates without a GeckoTerminal pool or candles
+    # are reported as unmeasured, not as non-runners.
+    pons_grads = sum(r["graduated_d10"] for r in pr)
+    runners = {}
+    for net, n_launch, n_grad in (("solana", len(pm), pf["graduated_d10_lower_bound"]["k"]), ("robinhood", n, pons_grads)):
+        v = [x for k, x in pk.items() if k.startswith(net + ":")]
+        m = [x for x in v if x.get("peak_mc")]
+        r100 = sum(1 for x in m if x["peak_mc"] >= 1e5)
+        r1m = sum(1 for x in m if x["peak_mc"] >= 1e6)
+        rug = sum(1 for x in m if x["last_close_over_peak"] is not None and x["last_close_over_peak"] <= 0.10)
+        runners[net] = {
+            "launches": n_launch, "graduates": n_grad, "graduates_queried": len(v), "measured": len(m),
+            "no_pool": sum(1 for x in v if x.get("pool") is None), "no_candles": sum(1 for x in v if x.get("pool") and not x.get("peak_mc")),
+            "runner_100k_of_measured": rate(r100, len(m)) if m else None, "runner_1m_of_measured": rate(r1m, len(m)) if m else None,
+            "runner_100k_per_launch": rate(r100, n_launch), "runner_1m_per_launch": rate(r1m, n_launch),
+            "rug_price_of_measured": rate(rug, len(m)) if m else None,
+            "peak_mc_median": statistics.median(x["peak_mc"] for x in m) if m else None,
+            "peak_mc_max": max((x["peak_mc"] for x in m), default=None),
+            "last_over_peak_median": statistics.median(x["last_close_over_peak"] for x in m) if m else None,
+        }
+    out["runners"] = runners
     out["api_calls"] = json.load(open(os.path.join(RAW, "usage_xchain.json")))["calls"]
     ex = os.path.join(client.ROOT, "data", "exports")
     keys = sorted({k for r in rows for k in r})

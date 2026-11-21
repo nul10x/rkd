@@ -88,6 +88,8 @@ def main():
             st["transfers_d7"][key] = [[x["address"].lower(), int(x["blockNumber"], 16)] for x in logs]
             save()
         print("batch", i, "calls", client.calls_used())
+    if os.environ.get("RKD_SKIP_DEX"):
+        return  # study 2 step 2: budget goes to transfers and peaks; day-7 survival comes from transfers_d7
     st.setdefault("dex", {})
     for i in range(0, len(toks), 30):
         if str(i) not in st["dex"]:
