@@ -2,15 +2,25 @@
 
 - Every successful response is cached as raw JSON under data/raw/<provider>/<sha256>.json.
   A cache hit makes no network call, so re-runs reproduce the numbers offline.
-- Every network call is counted in data/raw/usage.json and checked against a hard budget.
-- Throttle: at most RKD_RPS requests per second (default 2).
+- Every network call is counted in the usage file (RKD_USAGE, default data/raw/usage.json) and
+  checked against a hard budget. Rejected requests count too.
+- Throttle, held across processes through data/raw/throttle.sqlite: each provider has a minimum
+  interval between calls (MIN_INTERVAL), and all providers together stay under RKD_RPS per second.
 - HTTP 429 or a JSON-RPC rate-limit error stops the run (RateLimited). Nothing retries.
+  The provider is then paused until Retry-After, or for DEFAULT_PAUSE (at least MIN_PAUSE).
+  The pause covers that provider only and is shared by every usage file and process.
+- Usage and cache files are written atomically (temp file in the same folder, then os.replace).
+  An unreadable usage file is moved aside to <name>.corrupt-<unix> and its call count is salvaged.
 - The Helius key is read from the HELIUS_API_KEY environment variable only and is never written
   to disk or logs (cache keys hash the method and params, never the URL).
 """
+import email.utils
 import hashlib
 import json
 import os
+import re
+import sqlite3
+import tempfile
 import time
 import urllib.error
 import urllib.request
@@ -19,9 +29,19 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 RAW = os.environ.get("RKD_RAW", os.path.join(ROOT, "data", "raw"))
 USAGE = os.environ.get("RKD_USAGE", os.path.join(RAW, "usage.json"))  # one counter file per study run
 BUDGET = int(os.environ.get("RKD_CALL_BUDGET", "500"))
-RPS = float(os.environ.get("RKD_RPS", "2"))
+RPS = float(os.environ.get("RKD_RPS", "2"))  # global ceiling across providers and processes
 UA = "rkd-research/0.1"
-_last = [0.0]
+
+# Minimum seconds between two calls to the same provider, across processes.
+MIN_INTERVAL = {"geckoterminal": 15.0, "dexscreener": 0.5, "helius": 0.5, "robinhood_rpc": 0.5}
+DEFAULT_INTERVAL = 0.5
+# Pause after a rate limit when the server sends no Retry-After. MIN_PAUSE is a floor for both cases.
+DEFAULT_PAUSE = 900.0
+MIN_PAUSE = {"geckoterminal": 1800.0}
+LOCK_TIMEOUT = 900  # seconds a process waits for another one's throttle slot
+
+_now = time.time  # patched in tests
+_sleep = time.sleep
 
 
 class RateLimited(RuntimeError):
@@ -36,17 +56,81 @@ class ApiError(RuntimeError):
     pass
 
 
+# ---------- files ----------
+
+def _atomic_write_json(path, obj, **dump_kw):
+    d = os.path.dirname(path) or "."
+    os.makedirs(d, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=d, prefix="." + os.path.basename(path) + ".", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(obj, f, **dump_kw)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
+def _fresh_usage():
+    return {"calls": 0, "by_provider": {}, "errors": [], "paused": {}}
+
+
+def _migrate(u):
+    """Fill missing keys and turn the old global 'rate_limited' record into a per-provider pause."""
+    fresh = _fresh_usage()
+    for k, v in fresh.items():
+        if not isinstance(u.get(k), type(v)):
+            u[k] = v
+    old = u.pop("rate_limited", None)
+    if isinstance(old, dict):
+        p = old.get("provider") or "*"
+        at = float(old.get("at") or 0)
+        rec = dict(old, at=at, until=at + _pause_seconds(p, None), migrated=True)
+        rec.pop("provider", None)
+        cur = u["paused"].get(p)
+        if not isinstance(cur, dict) or float(cur.get("until") or 0) < rec["until"]:
+            u["paused"][p] = rec
+    return u
+
+
 def _usage():
-    if os.path.exists(USAGE):
-        with open(USAGE) as f:
-            return json.load(f)
-    return {"calls": 0, "by_provider": {}, "errors": [], "rate_limited": None}
+    if not os.path.exists(USAGE):
+        return _fresh_usage()
+    text = ""
+    try:
+        with open(USAGE, encoding="utf-8") as f:
+            text = f.read()
+        u = json.loads(text)
+        if not isinstance(u, dict):
+            raise ValueError("usage file is not a JSON object")
+    except (ValueError, OSError) as e:
+        return _recover_usage(text, e)
+    return _migrate(u)
+
+
+def _recover_usage(text, err):
+    """A half-written usage file (from a killed run) must not stop later runs, nor reset the budget."""
+    bad = "{}.corrupt-{}".format(USAGE, int(_now()))
+    try:
+        os.replace(USAGE, bad)
+    except OSError:
+        bad = None
+    u = _fresh_usage()
+    m = re.search(r'"calls"\s*:\s*(\d+)', text or "")
+    if m:
+        u["calls"] = int(m.group(1))
+    u["recovered"] = {"from": bad, "at": _now(), "error": str(err)[:200], "calls_salvaged": bool(m)}
+    _save_usage(u)
+    return u
 
 
 def _save_usage(u):
-    os.makedirs(RAW, exist_ok=True)
-    with open(USAGE, "w") as f:
-        json.dump(u, f, indent=1)
+    _atomic_write_json(USAGE, u, indent=1)
 
 
 def calls_used():
@@ -58,19 +142,123 @@ def _cache_path(provider, key_obj):
     return os.path.join(RAW, provider, h + ".json")
 
 
+# ---------- shared throttle and pauses ----------
+
+def _db():
+    os.makedirs(RAW, exist_ok=True)
+    c = sqlite3.connect(os.path.join(RAW, "throttle.sqlite"), timeout=LOCK_TIMEOUT, isolation_level=None)
+    c.execute("CREATE TABLE IF NOT EXISTS last_call(provider TEXT PRIMARY KEY, t REAL NOT NULL)")
+    c.execute("CREATE TABLE IF NOT EXISTS pause(provider TEXT PRIMARY KEY, until REAL NOT NULL, info TEXT)")
+    return c
+
+
+def _pause_seconds(provider, retry_after):
+    floor = MIN_PAUSE.get(provider, 0.0)
+    if retry_after is None:
+        return max(DEFAULT_PAUSE, floor)
+    return max(float(retry_after), floor)
+
+
+def _parse_retry_after(value):
+    """Retry-After is either seconds or an HTTP date. Returns seconds from now, or None."""
+    if value is None:
+        return None
+    value = str(value).strip()
+    if value.isdigit():
+        return float(value)
+    try:
+        dt = email.utils.parsedate_to_datetime(value)
+    except (TypeError, ValueError, IndexError):
+        return None
+    if dt is None:
+        return None
+    return max(0.0, dt.timestamp() - _now())
+
+
+def _paused_until(provider, u, c=None):
+    best = 0.0
+    for p in (provider, "*"):
+        rec = u["paused"].get(p)
+        if isinstance(rec, dict):
+            best = max(best, float(rec.get("until") or 0))
+    if c is not None:
+        for (until,) in c.execute("SELECT until FROM pause WHERE provider IN (?,?)", (provider, "*")):
+            best = max(best, until)
+    return best
+
+
+def paused_until(provider):
+    """Unix time until which `provider` is paused (0.0 = not paused or never was). Reads only."""
+    u = _usage()
+    path = os.path.join(RAW, "throttle.sqlite")
+    if not os.path.exists(path):
+        return _paused_until(provider, u)
+    c = _db()
+    try:
+        return _paused_until(provider, u, c)
+    finally:
+        c.close()
+
+
+def _check_pause(provider, u, c):
+    until = _paused_until(provider, u, c)
+    if until > _now():
+        raise RateLimited("{} is paused after a rate limit until {} UTC".format(
+            provider, time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime(until))))
+
+
+def _reserve(provider):
+    """Under the shared lock: check pause and budget, wait for the provider's slot, count the call."""
+    c = _db()
+    try:
+        c.execute("BEGIN IMMEDIATE")
+        u = _usage()
+        _check_pause(provider, u, c)
+        if u["calls"] >= BUDGET:
+            raise BudgetExceeded("call budget {} reached".format(BUDGET))
+        last = dict(c.execute("SELECT provider,t FROM last_call WHERE provider IN (?,?)", (provider, "*")))
+        ready = max(last.get(provider, 0.0) + MIN_INTERVAL.get(provider, DEFAULT_INTERVAL),
+                    last.get("*", 0.0) + 1.0 / RPS)
+        wait = ready - _now()
+        if wait > 0:
+            _sleep(wait)
+        t = _now()
+        c.executemany("INSERT OR REPLACE INTO last_call(provider,t) VALUES (?,?)", [(provider, t), ("*", t)])
+        u["calls"] += 1
+        u["by_provider"][provider] = u["by_provider"].get(provider, 0) + 1
+        _save_usage(u)
+        c.execute("COMMIT")
+    except BaseException:
+        if c.in_transaction:
+            c.execute("ROLLBACK")
+        raise
+    finally:
+        c.close()
+
+
+def _record_pause(provider, label, retry_after, extra=None):
+    at = _now()
+    rec = {"until": at + _pause_seconds(provider, retry_after), "at": at, "label": label,
+           "retry_after": retry_after}
+    rec.update(extra or {})
+    u = _usage()
+    u["paused"][provider] = rec
+    _save_usage(u)
+    c = _db()
+    try:
+        c.execute("INSERT OR REPLACE INTO pause(provider,until,info) VALUES (?,?,?)",
+                  (provider, rec["until"], json.dumps(rec)))
+    finally:
+        c.close()
+    return rec
+
+
+# ---------- requests ----------
+
 def _fetch(provider, url, body, label):
     u = _usage()
-    if u.get("rate_limited"):
-        raise RateLimited("an earlier run hit a rate limit: " + json.dumps(u["rate_limited"]))
-    if u["calls"] >= BUDGET:
-        raise BudgetExceeded("call budget {} reached".format(BUDGET))
-    wait = _last[0] + 1.0 / RPS - time.time()
-    if wait > 0:
-        time.sleep(wait)
-    _last[0] = time.time()
-    u["calls"] += 1
-    u["by_provider"][provider] = u["by_provider"].get(provider, 0) + 1
-    _save_usage(u)
+    _check_pause(provider, u, None)  # cheap early check; repeated under the lock in _reserve
+    _reserve(provider)
     headers = {"User-Agent": UA, "Accept": "application/json"}
     data = None
     if body is not None:
@@ -83,10 +271,9 @@ def _fetch(provider, url, body, label):
     except urllib.error.HTTPError as e:
         text = e.read().decode(errors="replace")[:300]
         if e.code == 429:
-            u = _usage()
-            u["rate_limited"] = {"provider": provider, "label": label, "at": time.time()}
-            _save_usage(u)
-            raise RateLimited("{} HTTP 429 on {}".format(provider, label))
+            ra = _parse_retry_after(e.headers.get("Retry-After") if e.headers else None)
+            rec = _record_pause(provider, label, ra)
+            raise RateLimited("{} HTTP 429 on {}; paused for {:.0f} s".format(provider, label, rec["until"] - rec["at"]))
         u = _usage()
         u["errors"].append({"provider": provider, "label": label, "http": e.code, "body": text})
         _save_usage(u)
@@ -95,11 +282,11 @@ def _fetch(provider, url, body, label):
         err = payload["error"]
         code = err.get("code") if isinstance(err, dict) else None
         msg = json.dumps(err)[:300]
-        u = _usage()
         if code == 429 or "rate" in msg.lower() and "limit" in msg.lower():
-            u["rate_limited"] = {"provider": provider, "label": label, "at": time.time(), "error": msg}
-            _save_usage(u)
-            raise RateLimited("{} rate limit on {}: {}".format(provider, label, msg))
+            rec = _record_pause(provider, label, None, {"error": msg})
+            raise RateLimited("{} rate limit on {}; paused for {:.0f} s: {}".format(
+                provider, label, rec["until"] - rec["at"], msg))
+        u = _usage()
         u["errors"].append({"provider": provider, "label": label, "rpc_error": msg})
         _save_usage(u)
         raise ApiError("{} error on {}: {}".format(provider, label, msg))
@@ -109,12 +296,10 @@ def _fetch(provider, url, body, label):
 def cached(provider, key_obj, url, body, label):
     path = _cache_path(provider, key_obj)
     if os.path.exists(path):
-        with open(path) as f:
+        with open(path, encoding="utf-8") as f:
             return json.load(f)["response"]
     resp = _fetch(provider, url, body, label)
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "w") as f:
-        json.dump({"request": key_obj, "fetched_at": time.time(), "response": resp}, f)
+    _atomic_write_json(path, {"request": key_obj, "fetched_at": time.time(), "response": resp})
     return resp
 
 
