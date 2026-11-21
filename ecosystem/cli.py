@@ -36,7 +36,7 @@ def main(argv=None):
     conn = connect(a.db)
     lb = Logbook(conn)
     if a.cmd == "msg":
-        raw = sys.stdin.read() if a.file == "-" else open(a.file).read()
+        raw = sys.stdin.read() if a.file == "-" else open(a.file, encoding="utf-8").read()
         out = handle(conn, json.loads(raw))
     elif a.cmd == "search":
         out = lb.search(a.text, a.category, a.status, a.kind, a.limit)

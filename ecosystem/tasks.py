@@ -5,9 +5,9 @@ past any budget limit pauses the task with its progress kept, so nothing
 runs in an unlimited loop.
 """
 import json
-from datetime import date
+from datetime import datetime, timezone
 
-from .db import load_limits, next_id, now, row_dict
+from .db import load_limits, next_id, now, row_dict, utc_day
 
 BUDGET_KEYS = ("model_requests", "max_minutes", "max_pages", "max_retries")
 
@@ -18,6 +18,15 @@ class BudgetExceeded(RuntimeError):
 
 class ProviderPaused(RuntimeError):
     pass
+
+
+def _utc_iso(ts):
+    """Normalise an ISO timestamp to the UTC '+00:00' form used by now(),
+    so string comparison is correct. Naive times are taken as UTC."""
+    d = datetime.fromisoformat(ts.strip().replace("Z", "+00:00"))
+    if d.tzinfo is None:
+        d = d.replace(tzinfo=timezone.utc)
+    return d.astimezone(timezone.utc).replace(microsecond=0).isoformat()
 
 
 class TaskQueue:
@@ -55,10 +64,16 @@ class TaskQueue:
         return r
 
     def claim(self, agent):
-        """Start the next queued task for `agent`, unless it already runs one."""
+        """Return the agent's running task, else start its next queued/paused one.
+
+        Runs are sequential, so a task still marked 'running' means the last
+        process was killed (Android does this); it is resumed, never doubled."""
         with self.conn:
-            if self.conn.execute("SELECT 1 FROM tasks WHERE agent=? AND status='running'", (agent,)).fetchone():
-                return None
+            running = self.conn.execute(
+                "SELECT id FROM tasks WHERE agent=? AND status='running' ORDER BY updated_at LIMIT 1",
+                (agent,)).fetchone()
+            if running:
+                return self.get(running["id"])
             r = self.conn.execute(
                 """SELECT id FROM tasks WHERE agent=? AND status IN ('queued','paused')
                    ORDER BY status='paused' DESC, priority, created_at LIMIT 1""", (agent,)).fetchone()
@@ -109,7 +124,7 @@ class TaskQueue:
     def provider_request(self, provider):
         """Count one external API request. Raises ProviderPaused at the daily cap
         or while a rate-limit pause is active. Never retries by itself."""
-        day = date.today().isoformat()
+        day = utc_day()
         cap = self.limits.get("providers", {}).get(provider, {}).get("daily_requests")
         with self.conn:
             self.conn.execute("INSERT OR IGNORE INTO api_usage(provider,day) VALUES (?,?)", (provider, day))
@@ -123,7 +138,8 @@ class TaskQueue:
         return r["requests"] + 1
 
     def provider_rate_limited(self, provider, until_iso):
-        day = date.today().isoformat()
+        until_iso = _utc_iso(until_iso)
+        day = utc_day()
         with self.conn:
             self.conn.execute("INSERT OR IGNORE INTO api_usage(provider,day) VALUES (?,?)", (provider, day))
             self.conn.execute("UPDATE api_usage SET paused_until=? WHERE provider=? AND day=?",

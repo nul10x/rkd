@@ -14,6 +14,7 @@ Envelope:
 Replies use type "result" or "error" with reply_to set to the request id.
 """
 import json
+import sqlite3
 import uuid
 
 from .db import now
@@ -100,7 +101,7 @@ def handle(conn, msg):
         reply = make("logbook", msg["from"], "error",
                      {"ok": False, "error": str(e), "duplicate_of": e.existing_id, "duplicate_kind": e.kind}, msg["id"])
         status = "error"
-    except (LogbookError, ProtocolError, KeyError, ValueError) as e:
+    except (LogbookError, ProtocolError, KeyError, ValueError, TypeError, sqlite3.Error) as e:
         reply = make("logbook", msg["from"], "error", {"ok": False, "error": "{}: {}".format(type(e).__name__, e)}, msg["id"])
         status = "error"
     with conn:

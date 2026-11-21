@@ -28,6 +28,7 @@ EDITABLE = ("title", "description", "category", "status", "confidence", "methodo
 # A finding above "under_investigation" must carry its basis.
 EVIDENCE_REQUIRED = ("historically_supported", "validated")
 NEAR_DUP_RATIO = 0.85
+RELATIONS = ("related", "supports", "contradicts", "supersedes", "derived_from", "implements", "tests")
 
 
 class LogbookError(ValueError):
@@ -125,6 +126,8 @@ class Logbook:
         old = self.get_row(rid)
         if old is None:
             raise LogbookError("no such record: " + rid)
+        if not changes:
+            raise LogbookError("no changes given")
         bad = set(changes) - set(EDITABLE)
         if bad:
             raise LogbookError("not editable: " + ", ".join(sorted(bad)))
@@ -154,6 +157,8 @@ class Logbook:
             self._add_source(rid, source)
 
     def _link(self, src, dst, relation, by, note):
+        if relation not in RELATIONS:
+            raise LogbookError("unknown relation: {} (allowed: {})".format(relation, ", ".join(RELATIONS)))
         if src == dst:
             raise LogbookError("cannot link a record to itself")
         for r in (src, dst):
@@ -244,7 +249,10 @@ class Logbook:
         probe = (title + " " + description).lower()
         hits = []
         for c in cands:
-            ratio = difflib.SequenceMatcher(None, probe, (c["title"] + " " + c["description"]).lower()).ratio()
+            sm = difflib.SequenceMatcher(None, probe, (c["title"] + " " + c["description"]).lower())
+            if sm.real_quick_ratio() < NEAR_DUP_RATIO or sm.quick_ratio() < NEAR_DUP_RATIO:
+                continue                     # cheap upper bounds; skips the slow ratio() on a phone
+            ratio = sm.ratio()
             if ratio >= NEAR_DUP_RATIO:
                 hits.append({"id": c["id"], "title": c["title"], "similarity": round(ratio, 3)})
         return sorted(hits, key=lambda h: -h["similarity"])[:limit]

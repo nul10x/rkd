@@ -5,7 +5,9 @@ import sqlite3
 import tempfile
 import unittest
 
-from ecosystem.db import connect
+from datetime import datetime, timezone
+
+from ecosystem.db import connect, load_schema, set_journal
 from ecosystem.logbook import DuplicateRecord, Logbook, LogbookError
 from ecosystem.protocol import handle, make
 from ecosystem.tasks import BudgetExceeded, ProviderPaused, TaskQueue
@@ -140,7 +142,7 @@ class ProtocolAndTaskTests(unittest.TestCase):
         tid = self.q.add("researcher", "EXAMPLE objective", "report submitted", "user",
                          budget={"model_requests": 2})
         self.assertEqual(self.q.claim("researcher")["id"], tid)
-        self.assertIsNone(self.q.claim("researcher"))        # sequential
+        self.assertEqual(self.q.claim("researcher")["id"], tid)  # sequential: same task, not a second
         self.q.spend(tid, "model_requests", progress={"page": 1})
         self.q.spend(tid, "model_requests")
         with self.assertRaises(BudgetExceeded):
@@ -159,6 +161,109 @@ class ProtocolAndTaskTests(unittest.TestCase):
         self.q.provider_rate_limited("other", "2999-01-01T00:00:00+00:00")
         with self.assertRaises(ProviderPaused):
             self.q.provider_request("other")
+
+
+class TermuxRegressionTests(unittest.TestCase):
+    """Regression tests for the 2026-11-21 Termux/Android review."""
+
+    def setUp(self):
+        self.conn = connect(":memory:")
+        self.lb = Logbook(self.conn)
+        self.q = TaskQueue(self.conn, limits={})
+
+    def _two_records(self):
+        a = self.lb.save(dict(FINDING))["id"]
+        b = self.lb.save(dict(FINDING, title="EXAMPLE: unrelated wallet funding pattern",
+                              description="EXAMPLE DATA. Something else entirely."))["id"]
+        return a, b
+
+    def test_killed_process_task_is_resumed(self):
+        tid = self.q.add("builder", "EXAMPLE objective", "tests pass", "user")
+        self.q.claim("builder")
+        # simulate Android killing the process: a fresh queue on the same database
+        again = TaskQueue(self.conn, limits={}).claim("builder")
+        self.assertIsNotNone(again)
+        self.assertEqual((again["id"], again["status"]), (tid, "running"))
+
+    def test_unknown_relation_is_refused_not_ignored(self):
+        a, b = self._two_records()
+        with self.assertRaises(LogbookError):
+            self.lb.link(a, b, "implement", "builder")
+        r = handle(self.conn, make("builder", "logbook", "link", {"src": a, "dst": b, "relation": "foo"}))
+        self.assertFalse(r["payload"]["ok"])
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM links").fetchone()[0], 0)
+
+    def test_empty_update_is_an_error_reply(self):
+        a, _ = self._two_records()
+        r = handle(self.conn, make("builder", "logbook", "update_record", {"id": a, "changes": {}}))
+        self.assertFalse(r["payload"]["ok"])
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM messages WHERE status='new'").fetchone()[0], 0)
+
+    def test_database_error_becomes_error_reply(self):
+        r = handle(self.conn, make("builder", "logbook", "submit_record", {"record": "not an object"}))
+        self.assertFalse(r["payload"]["ok"])
+
+    def test_provider_day_is_utc(self):
+        self.q.provider_request("demo")
+        day = self.conn.execute("SELECT day FROM api_usage WHERE provider='demo'").fetchone()[0]
+        self.assertEqual(day, datetime.now(timezone.utc).date().isoformat())
+
+    def test_rate_limit_time_is_normalised_to_utc(self):
+        for prov, ts in (("z", "2999-01-01T00:00:00Z"), ("off", "2999-01-01T02:00:00+02:00"),
+                         ("naive", "2999-01-01T00:00:00")):
+            self.q.provider_rate_limited(prov, ts)
+            got = self.conn.execute("SELECT paused_until FROM api_usage WHERE provider=?", (prov,)).fetchone()[0]
+            self.assertEqual(got, "2999-01-01T00:00:00+00:00")
+            with self.assertRaises(ProviderPaused):
+                self.q.provider_request(prov)
+
+    def test_ids_keep_increasing_past_999999(self):
+        ts = "2026-01-01T00:00:00+00:00"
+        self.conn.execute("INSERT INTO tasks(id,agent,objective,done_condition,budget,created_by,created_at,updated_at)"
+                          " VALUES ('T-999999','x','o','d','{}','user',?,?)", (ts, ts))
+        self.assertEqual(self.q.add("x", "o", "d", "user"), "T-1000000")
+        self.assertEqual(self.q.add("x", "o", "d", "user"), "T-1000001")
+
+
+class _FakeConn:
+    """Stands in for a connection on a filesystem we cannot reproduce here."""
+    def __init__(self, fail_on):
+        self.fail_on, self.calls = fail_on, []
+
+    def execute(self, sql):
+        self.calls.append(sql)
+        if self.fail_on in sql:
+            raise sqlite3.OperationalError("disk I/O error")
+        return self
+
+    def fetchone(self):
+        return ("delete",)
+
+    def executescript(self, sql):
+        raise sqlite3.OperationalError("no such module: fts5")
+
+
+class FilesystemFallbackTests(unittest.TestCase):
+    def test_wal_unsupported_falls_back_to_delete(self):
+        c = _FakeConn(fail_on="WAL")
+        self.assertEqual(set_journal(c), "delete")
+        self.assertIn("PRAGMA journal_mode = DELETE", c.calls)
+
+    def test_wal_on_normal_file(self):
+        fd, path = tempfile.mkstemp(suffix=".db"); os.close(fd)
+        try:
+            conn = connect(path)
+            self.assertEqual(conn.execute("PRAGMA journal_mode").fetchone()[0], "wal")
+            conn.close()
+        finally:
+            for ext in ("", "-wal", "-shm"):
+                if os.path.exists(path + ext):
+                    os.remove(path + ext)
+
+    def test_missing_fts5_has_clear_message(self):
+        with self.assertRaises(RuntimeError) as cm:
+            load_schema(_FakeConn(fail_on="never"))
+        self.assertIn("FTS5", str(cm.exception))
 
 
 if __name__ == "__main__":
