@@ -102,6 +102,17 @@ token and show pair-level numbers.
    rank by them. Prefer buyers/sellers counts and txns over raw volume (volume is washable).
 5. **Cost per scan:** 1 DEX Screener call per 30 tokens + 3 RPC calls per token
    (mint info, largest accounts, owners). 30 tokens ≈ 91 calls.
+6. **"Graduated" is risk context, not quality (KR-000038, historically_supported; primary KR-000036).**
+   - Block-0 buyers (in the creation slot) are the norm among Pump.fun graduates: 79.5% vs 25.7% of non-graduates on 2026-11-11 (n=73/300), 88.7% vs 18.0% on 2026-11-09 (n=115/300).
+   - 41% and 60% of graduates graduated inside their own creation slot, so graduation is often bought.
+   - Next to `graduated`, show these risk fields:
+     - block-0 supply share;
+     - block-0 buyer count;
+     - a `same_slot_graduation` flag.
+   - Reuse `block0()` from `research/study3_parse.py` (tests in `tests/test_study3_parse.py`). It counts net receivers across the creation slot, excluding the deployer, the curve and any owner that sends tokens in that slot. Don't write a second parser.
+   - Label: association only and partly mechanical. Block-0 clusters mix dev bundles with independent snipers until a funding-link test exists. Never sort or score by `graduated`.
+   - Cost: one extra call per token (the creation-slot transactions); cache it forever, since the slot is history.
+7. **Post-graduation ratios stay descriptive.** At T+1h, liq/MC, vol/MC and traders/SOL are not a runner screen (KR-000036/038). A low pool share of supply at 1 h goes with a later 90% fall (KR-000037), but mostly reflects when the dump happens. Show it as risk context, never as an edge or a rank key.
 
 ## 2. Smart-money intelligence
 
