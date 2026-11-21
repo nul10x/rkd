@@ -1,0 +1,7 @@
+data/*.db
+data/*.db-*
+data/exports/
+__pycache__/
+*.pyc
+.env
+*.key

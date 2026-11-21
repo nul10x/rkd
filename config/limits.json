@@ -1,0 +1,19 @@
+{
+  "task_defaults": {
+    "model_requests": 5,
+    "max_minutes": 15,
+    "max_pages": 20,
+    "max_retries": 2
+  },
+  "task_caps": {
+    "model_requests": 30,
+    "max_minutes": 60,
+    "max_pages": 100,
+    "max_retries": 3
+  },
+  "max_concurrent_agents": 1,
+  "providers": {
+    "dexscreener": { "daily_requests": 2000, "note": "placeholder cap; confirm the provider's published limit before use" },
+    "llm_free_tier": { "daily_requests": 50, "note": "set to the real free allowance of the configured provider" }
+  }
+}
