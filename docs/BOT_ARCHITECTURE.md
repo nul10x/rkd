@@ -1,4 +1,6 @@
-# Bot and app architecture: lessons from production systems (v1, 2026-11-21)
+# Bot and app architecture: lessons from production systems (v2, 2026-11-21)
+
+v2: target changed to macOS/Windows laptop, launched from Discord; phone secondary.
 
 Reference for every tracker, scraper and alert tool built under `tools/`.
 Studied: NautilusTrader (institutional-grade engine), Hummingbot (retail market-making
@@ -56,27 +58,65 @@ Every serious system splits into the same five parts, each behind one interface:
 - **Scams.** The pump.fun bot repo warns that scam bots post wallet-drainer links in its
   issues. Never run untrusted bot code that asks for a private key.
 
-## 4. What we adopt (Termux, 4 GB, stdlib, read-only)
+## 4. What we adopt: a laptop (macOS / Windows) driven from Discord
 
-1. **One-shot runs, not daemons.** Each run: load checkpoint → fetch since checkpoint →
-   decode → rules → write results and checkpoint in one transaction → exit. Android can kill
-   the process at any point, and the next run resumes.
-2. **Layout per tool:** `source.py` (adapter, the only network code) · `decode.py` ·
-   `rules.py` (pure) · `sink.py` (Logbook / Discord) · `run.py` (wires them, one run) ·
-   `fixtures/` (recorded raw responses) · `tests/`.
-3. **Record-and-replay tests.** Save real API responses once as fixtures. Tests run decoders
-   and rules on fixtures with no network. Live and test share the same code path.
-4. **Gaps are data.** Each run logs the range it covered. A missed range is stored and
-   backfilled next run, never skipped silently.
-5. **Budgets and limits** go through `TaskQueue.provider_request()` (daily caps, rate-limit pause).
-   On HTTP 429, honour `Retry-After` and stop the run. No retry loops.
-6. **Idempotent sinks.** Alerts carry a dedupe key (e.g. mint + rule), stored before sending,
-   so a re-run never double-posts.
-7. **Discord = outgoing webhook.** One HTTPS POST per alert from a one-shot run. No gateway
-   connection, no bot token, no server. Interactive slash commands need either an always-on
-   gateway connection or a public HTTPS endpoint. Both need a host other than the phone.
-8. **No execution layer.** Signals end at the alert. Sniping/trading would need keys and
-   paid low-latency infrastructure. Out of scope by rule.
+Primary target is the user's Mac or Windows laptop. The phone (Termux) is secondary:
+tools stay portable, but the design assumes a desktop.
+
+```
+ Discord (you)                       Laptop
+ /scan, /status  ───gateway──>  bot/ (one supervised process, discord.py, asyncio)
+                                  │ 1. check user/role, validate input
+                                  │ 2. defer reply (3 s limit -> 15 min)
+                                  │ 3. TaskQueue.add(...)  (SQLite, ecosystem/)
+                                  │ 4. run tool in a SUBPROCESS: sys.executable -m tools.<name>.run
+                                  │ 5. post result: followup (<15 min) or channel message
+                                  ▼
+                         tools/<name>/  one-shot, resumable, stdlib-only
+                         source -> decode -> rules -> sink, checkpoint + results in one transaction
+```
+
+1. **The bot is only the front door.** It parses commands, checks permissions, queues the
+   task and starts the tool. It does no analysis itself. Blocking code in the bot stalls its
+   heartbeat ("Heartbeat blocked for more than N seconds", discord.py FAQ) and Discord drops
+   the connection.
+2. **Work runs in a subprocess, not in the bot.** That keeps the event loop free and contains
+   crashes. Each job's memory is freed when it exits. The same command works without Discord:
+   `python3 -m tools.<name>.run`.
+3. **Defer, then follow up.** An interaction must be answered within 3 seconds. Deferring
+   extends that to 15 minutes. Longer jobs post a fresh channel message when they finish.
+4. **One supervisor, one instance.** macOS: a `launchd` LaunchAgent in `~/Library/LaunchAgents`
+   with `RunAtLoad` + `KeepAlive` restarts the bot after a crash or login. Windows: Task
+   Scheduler "at log on" with restart-on-failure. The bot takes a lock file at start so a
+   second copy (supervisor plus a manual run) exits instead of double-replying.
+5. **Laptop sleep is normal.** When the lid closes, the bot goes offline and scheduled scans
+   don't run. On wake, discord.py reconnects, and the next run reads its checkpoint and
+   backfills the missed range (gap table), so nothing is skipped silently. 24/7 alerts need an
+   always-on machine. That is a later decision.
+6. **Schedules go through the same queue.** Periodic scans are tasks added by the bot's timer
+   (or launchd `StartCalendarInterval` / Task Scheduler), so budgets, caps and checkpoints apply
+   to every run.
+7. **Dependencies.** `ecosystem/` and `tools/` stay standard-library. The bot alone may use
+   `discord.py` (the stdlib has no websocket client for the gateway), pinned in
+   `bot/requirements.txt` inside a venv. Plain alerts don't need the bot: an outgoing webhook is
+   one HTTPS POST with `urllib`.
+8. **Secrets.** The bot token and webhook URL come from the environment, loaded from a
+   git-ignored `.env` or the OS keychain (macOS Keychain, Windows Credential Manager). Never in
+   the repo, the Logbook or chat.
+9. **Cross-platform code.** `pathlib` everywhere, `sys.executable` for subprocesses, UTF-8 I/O,
+   no shell built-ins, no hard-coded `/tmp` (use `tempfile`). The SQLite DB stays on a local disk.
+   Keep it out of iCloud/OneDrive/Dropbox-synced folders, because sync tools can corrupt a live
+   SQLite file with its `-wal`/`-shm` side files.
+10. **Discord hygiene.** Slash commands registered to the user's server only, restricted to the
+    user's role. `allowed_mentions` off, so alerts can't ping @everyone. Validate token/mint
+    addresses before use. discord.py handles REST rate limits. Our own code honours `Retry-After`.
+11. **Idempotent alerts.** Each alert has a dedupe key (e.g. mint + rule), stored before
+    sending, so re-runs after sleep never double-post.
+12. **Testing.** Tools: record-and-replay fixtures, no network (as before). Bot: command
+    handlers are thin functions tested with a fake interaction object. The Discord connection itself
+    is checked manually once per release.
+13. **No execution layer.** Signals end at the alert. Sniping/trading would need keys and
+    paid low-latency infrastructure. Out of scope by rule.
 
 ## Sources (retrieved 2026-11-21)
 
@@ -91,6 +131,11 @@ Every serious system splits into the same five parts, each behind one interface:
 - https://github.com/shaurya35/solana-realtime-indexer/blob/main/DESIGN.md
 - https://docs.discord.com/developers/events/gateway
 - https://support-dev.discord.com/hc/en-us/articles/6223003921559-My-Bot-is-Being-Rate-Limited
+- https://discordpy.readthedocs.io/en/stable/faq.html
+- https://gist.github.com/cibere/7e1356575780e716d2e3a23ea2bcf6da (defer: 3 s -> 15 min)
+- https://www.launchd.info/
 
-Not verified: Discord's exact HTTP-interaction requirements (signature check, response
-deadline). The docs page did not render; read it before building slash commands.
+Not verified: Discord HTTP-interaction details (signature check), the exact Windows Task
+Scheduler restart settings, and whether `~/Documents` on this Mac is iCloud-synced (the check
+hung). The 3 s / 15 min interaction limits come from a discord.py gist and tutorial, not the
+official page, which did not render.

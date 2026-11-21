@@ -1,7 +1,7 @@
 # RKD: Research, Knowledge & Development Ecosystem
 
 Three agents — **Researcher → Logbook → Builder** — that share one SQLite knowledge base.
-Python 3.8+ standard library only. Runs the same on macOS, Linux, or Termux/Ubuntu on Android.
+Python 3.8+ standard library only. Primary target: macOS/Windows laptop, launched from Discord (see `docs/BOT_ARCHITECTURE.md`). Also runs on Linux and Termux/Android.
 
 Status: Phase 2 (foundation) and Phase 3 core (Logbook) are built and tested. See `docs/PROJECT_STATUS.md`.
 
