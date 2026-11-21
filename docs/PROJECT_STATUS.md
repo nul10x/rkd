@@ -13,6 +13,11 @@
 - Tested: 15 unit tests pass, covering save, search, FTS-safe queries, versioned updates, evidence gate, no-delete, exact and near duplicates, contradictions, stale, restart persistence, message round trip, budgets, provider caps.
 - Not done: phone audit, Researcher, Builder, coordinator, backup/export.
 
+### 2026-11-21: Runtime decision
+- User chose **Mac + OpenBot** as the runtime (not Hermes on the phone, for now). The repo stays portable to Termux.
+- Created OpenBot agents **Researcher** and **Builder**. The Logbook is this Python core, used through the CLI and rkd/1 messages.
+- Researcher's first task: plan the dev-wallet hold-time study and choose free read-only data sources, with no data collection yet. Builder's first task: run the tests and review the code for Termux portability.
+
 ## Phone audit commands (run in Termux/Ubuntu)
 
 ```bash
