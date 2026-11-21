@@ -135,3 +135,22 @@ def dexscreener_tokens(mints):
     mints = sorted(mints)
     url = "https://api.dexscreener.com/tokens/v1/solana/" + ",".join(mints)
     return cached("dexscreener", {"tokens": mints}, url, None, "tokens/v1")
+
+
+ROBINHOOD_RPC = os.environ.get("RH_RPC_URL", "https://rpc.mainnet.chain.robinhood.com")  # public, rate limited
+
+
+def evm_rpc(method, params, provider="robinhood_rpc", url=None):
+    """JSON-RPC on an EVM chain (default: Robinhood Chain public RPC). Cached like helius_rpc.
+    Do not use for 'latest'-dependent calls you need fresh: the cache key is method+params."""
+    key_obj = {"method": method, "params": params}
+    body = {"jsonrpc": "2.0", "id": 1, "method": method, "params": params}
+    return cached(provider, key_obj, url or ROBINHOOD_RPC, body, method)["result"]
+
+
+def dexscreener_tokens_chain(chain, mints):
+    """GET /tokens/v1/{chain}/{<=30 addresses}."""
+    assert 0 < len(mints) <= 30
+    mints = sorted(mints)
+    url = "https://api.dexscreener.com/tokens/v1/{}/{}".format(chain, ",".join(mints))
+    return cached("dexscreener", {"chain": chain, "tokens": mints}, url, None, "tokens/v1")

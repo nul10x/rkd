@@ -92,3 +92,16 @@ def bootstrap(fn, rows, n=2000, seed=1, alpha=0.05):
         return None, None, 0
     vals.sort()
     return vals[int(alpha / 2 * len(vals))], vals[int((1 - alpha / 2) * len(vals)) - 1], len(vals) / n
+
+
+def newcombe_diff(k1, n1, k2, n2, z=1.96):
+    """Newcombe (1998, method 10) hybrid-score 95% CI for p1 - p2 from two Wilson intervals."""
+    if not n1 or not n2:
+        return None, None, None
+    p1, p2 = k1 / n1, k2 / n2
+    l1, u1 = wilson(k1, n1, z)
+    l2, u2 = wilson(k2, n2, z)
+    d = p1 - p2
+    lo = d - math.sqrt((p1 - l1) ** 2 + (u2 - p2) ** 2)
+    hi = d + math.sqrt((u1 - p1) ** 2 + (p2 - l2) ** 2)
+    return d, lo, hi

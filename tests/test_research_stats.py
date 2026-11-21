@@ -65,3 +65,30 @@ class DevBuyTest(unittest.TestCase):
         self.assertTrue(r["replicates"])
         self.assertLess(r["p_one_sided"], 0.001)
         self.assertGreater(r["median_diff_ci95"][0], 0)
+
+
+class NewcombeTest(unittest.TestCase):
+    def test_diff_contains_point_and_sign(self):
+        from research.stats import newcombe_diff
+        d, lo, hi = newcombe_diff(73, 3858, 4, 1008)
+        self.assertTrue(lo < d < hi)
+        self.assertGreater(lo, 0)
+        d, lo, hi = newcombe_diff(5, 50, 5, 50)
+        self.assertAlmostEqual(d, 0.0)
+        self.assertLess(lo, 0)
+        self.assertGreater(hi, 0)
+
+
+class RobinhoodChunkTest(unittest.TestCase):
+    def test_get_logs_chunks_never_exceed_limit(self):
+        from collectors import xchain_rh
+        calls = []
+        orig = xchain_rh.client.evm_rpc
+        xchain_rh.client.evm_rpc = lambda m, p: calls.append(p[0]) or []
+        try:
+            xchain_rh.get_logs({"address": ["0xa", "0xb"], "topics": ["t"]}, 0, 250000)
+            xchain_rh.get_logs({"topics": ["t"]}, 0, 59999)
+        finally:
+            xchain_rh.client.evm_rpc = orig
+        spans = [int(c["toBlock"], 16) - int(c["fromBlock"], 16) + 1 for c in calls]
+        self.assertEqual(spans, [100000, 100000, 50001, 30000, 30000])
