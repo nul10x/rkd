@@ -264,3 +264,47 @@ class IntervalTest(ClientBase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class LogbookCountTest(ClientBase):
+    """Opt-in api_usage / task budget counting in the Logbook (temp DB only)."""
+
+    def setUp(self):
+        super().setUp()
+        self.db = os.path.join(self.raw, "logbook.db")
+        self.env = mock.patch.dict(os.environ, {"RKD_LOGBOOK_COUNT": "1", "RKD_DB": self.db})
+        self.env.start()
+        from ecosystem.db import connect
+        from ecosystem.tasks import TaskQueue
+        self.conn = connect(self.db)
+        self.q = TaskQueue(self.conn)
+
+    def tearDown(self):
+        self.conn.close()
+        self.env.stop()
+        super().tearDown()
+
+    def requests(self, provider):
+        r = self.conn.execute("SELECT SUM(requests) AS n FROM api_usage WHERE provider=?", (provider,)).fetchone()
+        return r["n"] or 0
+
+    def test_counts_requests_and_task_budget(self):
+        tid = self.q.add("researcher", "obj", "done", "researcher", budget={"api_calls": 1})
+        with mock.patch.dict(os.environ, {"RKD_TASK": tid}):
+            self.responses = [{"x": 1}]
+            self.ds(1)
+            self.assertEqual(self.requests("dexscreener"), 1)
+            self.assertEqual(self.q.get(tid)["used"]["api_calls"], 1)
+            self.ds(1)  # cached: no request, no count
+            self.assertEqual(self.requests("dexscreener"), 1)
+            from ecosystem.tasks import BudgetExceeded
+            self.responses = [{"x": 2}]
+            with self.assertRaises(BudgetExceeded):
+                self.ds(2)
+            self.assertEqual(self.q.get(tid)["status"], "paused")
+
+    def test_off_by_default(self):
+        with mock.patch.dict(os.environ, {"RKD_LOGBOOK_COUNT": "0"}):
+            self.responses = [{"x": 1}]
+            self.ds(3)
+        self.assertEqual(self.requests("dexscreener"), 0)

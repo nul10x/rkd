@@ -4,7 +4,7 @@ Generated from the Logbook by `python3 -m research.kb_index`. Do not edit by han
 `python3 -m ecosystem.cli get KR-xxxxxx`; search with `python3 -m ecosystem.cli search "<words>"`.
 Status ladder: unverified < hypothesis < under_investigation < historically_supported < validated (or rejected).
 
-Records: 25
+Records: 32
 
 ## 1. Blockchain and on-chain analytics
 
@@ -79,7 +79,7 @@ Records: 25
 - **Insider wallet behaviour**: KR-000023
 - **Liquidity changes vs price**: KR-000015, KR-000016, KR-000017
 - **Rug-pull precursors**: KR-000010, KR-000012, KR-000015, KR-000016, KR-000023
-- **Strategies vs fees and slippage**: KR-000019
+- **Strategies vs fees and slippage**: KR-000019, KR-000027, KR-000028
 
 ## Studies, plans and lessons not tagged with a division
 
@@ -102,3 +102,10 @@ Records: 25
 | KR-000015 | report | unverified | 0.50 | 2026-11-21 | Review: memecoin trading-strategy evidence, MC/liquidity/volume ratios, rug-pull charts and launch bundles |
 | KR-000016 | report | n/a | - | 2026-11-21 | Plan, study 3: block-0 bundles vs graduation and dev exit; post-graduation liq/MC, vol/MC, traders-per-SOL vs later runs and rugs (Pump.fun, 2026-11-11 + holdout 2026-11-09) |
 | KR-000017 | observation | unverified | 0.80 | 2026-11-21 | Study 3 pilot: block-0 parsing needs a net-receiver rule (same-slot graduation exists); liq/MC in a PumpSwap pool = 2 x pool share of supply |
+| KR-000026 | lesson | n/a | - | 2026-11-21 | Platform architecture for six memecoin projects: live-snapshot fetch path, shared facts DB, facts vs heuristics, event-driven paper/backtest parity |
+| KR-000027 | decision | n/a | - | 2026-11-21 | Team rule: optimise for reliable evidence, risk identification and net-of-cost edge tests, never for finding coins that go up |
+| KR-000028 | tool | n/a | - | 2026-11-21 | research/trade_costs.py: Pump.fun round-trip breakeven and buy price impact calculator |
+| KR-000029 | tool | n/a | - | 2026-11-21 | research/curve_ratios.py: liquidity/MC of a Pump.fun token along the curve and at migration |
+| KR-000030 | tool | n/a | - | 2026-11-21 | research/kb_index.py: generates docs/knowledge/INDEX.md from the Logbook by research division |
+| KR-000031 | tool | n/a | - | 2026-11-21 | Study 3 pipeline: collectors/study3.py, research/study3_parse.py, research/study3_analyze.py |
+| KR-000032 | tool | n/a | - | 2026-11-21 | collectors/client.py: opt-in Logbook counting of API requests (api_usage) and task budgets |

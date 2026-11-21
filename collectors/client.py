@@ -255,10 +255,43 @@ def _record_pause(provider, label, retry_after, extra=None):
 
 # ---------- requests ----------
 
+def _logbook_count(provider):
+    """Opt-in (RKD_LOGBOOK_COUNT=1): count the request in the Logbook's api_usage (daily caps from
+    config/limits.json apply) and, with RKD_TASK=<task id>, in that task's 'api_calls' budget.
+    Off by default so tests and offline analysis never write to the shared Logbook."""
+    if os.environ.get("RKD_LOGBOOK_COUNT") != "1":
+        return
+    from ecosystem.db import connect
+    from ecosystem.tasks import TaskQueue
+    conn = connect(os.environ.get("RKD_DB") or None)
+    try:
+        q = TaskQueue(conn)
+        q.provider_request(provider)
+        if os.environ.get("RKD_TASK"):
+            q.spend(os.environ["RKD_TASK"], "api_calls")
+    finally:
+        conn.close()
+
+
+def _logbook_pause(provider, until_ts):
+    if os.environ.get("RKD_LOGBOOK_COUNT") != "1":
+        return
+    from ecosystem.db import connect
+    from ecosystem.tasks import TaskQueue
+    import datetime as _dt
+    conn = connect(os.environ.get("RKD_DB") or None)
+    try:
+        iso = _dt.datetime.fromtimestamp(until_ts, tz=_dt.timezone.utc).isoformat()
+        TaskQueue(conn).provider_rate_limited(provider, iso)
+    finally:
+        conn.close()
+
+
 def _fetch(provider, url, body, label):
     u = _usage()
     _check_pause(provider, u, None)  # cheap early check; repeated under the lock in _reserve
     _reserve(provider)
+    _logbook_count(provider)
     headers = {"User-Agent": UA, "Accept": "application/json"}
     data = None
     if body is not None:
@@ -273,6 +306,7 @@ def _fetch(provider, url, body, label):
         if e.code == 429:
             ra = _parse_retry_after(e.headers.get("Retry-After") if e.headers else None)
             rec = _record_pause(provider, label, ra)
+            _logbook_pause(provider, rec["until"])
             raise RateLimited("{} HTTP 429 on {}; paused for {:.0f} s".format(provider, label, rec["until"] - rec["at"]))
         u = _usage()
         u["errors"].append({"provider": provider, "label": label, "http": e.code, "body": text})
@@ -284,6 +318,7 @@ def _fetch(provider, url, body, label):
         msg = json.dumps(err)[:300]
         if code == 429 or "rate" in msg.lower() and "limit" in msg.lower():
             rec = _record_pause(provider, label, None, {"error": msg})
+            _logbook_pause(provider, rec["until"])
             raise RateLimited("{} rate limit on {}; paused for {:.0f} s: {}".format(
                 provider, label, rec["until"] - rec["at"], msg))
         u = _usage()
