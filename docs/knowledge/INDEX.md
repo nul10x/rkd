@@ -4,7 +4,7 @@ Generated from the Logbook by `python3 -m research.kb_index`. Do not edit by han
 `python3 -m ecosystem.cli get KR-xxxxxx`; search with `python3 -m ecosystem.cli search "<words>"`.
 Status ladder: unverified < hypothesis < under_investigation < historically_supported < validated (or rejected).
 
-Records: 32
+Records: 38
 
 ## 1. Blockchain and on-chain analytics
 
@@ -31,6 +31,7 @@ Records: 32
 | id | kind | status | conf | date | title |
 |---|---|---|---|---|---|
 | KR-000019 | finding | unverified | 0.70 | 2026-11-21 | Costs that a memecoin strategy must beat: Pump.fun fees, fixed per-tx costs, buy price impact, and evidence on strategies after costs |
+| KR-000037 | hypothesis | historically_supported | 0.55 | 2026-11-21 | H3c: Pump.fun graduates whose PumpSwap pool still holds a small share of supply 1 h after graduation (low liq/MC, low vol/MC) are more likely to fall >=90% from that point by day 7 |
 
 ## 5. Contract security and scam detection
 
@@ -38,6 +39,7 @@ Records: 32
 |---|---|---|---|---|---|
 | KR-000022 | finding | unverified | 0.60 | 2026-11-21 | Token security checks for memecoins: Solana mint/freeze authority and Token-2022 extensions that enable scams |
 | KR-000023 | finding | unverified | 0.50 | 2026-11-21 | Rug-pull precursors and insider-wallet indicators: what the evidence supports at launch time |
+| KR-000037 | hypothesis | historically_supported | 0.55 | 2026-11-21 | H3c: Pump.fun graduates whose PumpSwap pool still holds a small share of supply 1 h after graduation (low liq/MC, low vol/MC) are more likely to fall >=90% from that point by day 7 |
 
 ## 6. Trading psychology
 
@@ -77,8 +79,8 @@ Records: 32
 - **Organic vs artificial volume**: KR-000020
 - **Narrative identification**: KR-000025
 - **Insider wallet behaviour**: KR-000023
-- **Liquidity changes vs price**: KR-000015, KR-000016, KR-000017
-- **Rug-pull precursors**: KR-000010, KR-000012, KR-000015, KR-000016, KR-000023
+- **Liquidity changes vs price**: KR-000015, KR-000016, KR-000017, KR-000037
+- **Rug-pull precursors**: KR-000010, KR-000012, KR-000015, KR-000016, KR-000023, KR-000037
 - **Strategies vs fees and slippage**: KR-000019, KR-000027, KR-000028
 
 ## Studies, plans and lessons not tagged with a division
@@ -109,3 +111,8 @@ Records: 32
 | KR-000030 | tool | n/a | - | 2026-11-21 | research/kb_index.py: generates docs/knowledge/INDEX.md from the Logbook by research division |
 | KR-000031 | tool | n/a | - | 2026-11-21 | Study 3 pipeline: collectors/study3.py, research/study3_parse.py, research/study3_analyze.py |
 | KR-000032 | tool | n/a | - | 2026-11-21 | collectors/client.py: opt-in Logbook counting of API requests (api_usage) and task budgets |
+| KR-000033 | tool | n/a | - | 2026-11-21 | Tool collectors/client.py 2.0: atomic usage/cache files, per-provider rate-limit pauses, cross-process per-provider throttle |
+| KR-000034 | tool | n/a | - | 2026-11-21 | Tool ecosystem 1.1: Termux/Android review fixes (stuck tasks, silent bad links, empty updates, UTC caps, WAL fallback, FTS5 message, id rollover) |
+| KR-000035 | lesson | n/a | - | 2026-11-21 | Offline re-runs from a linked worktree overwrite shared exports; guard by backing up and restoring data/exports (new Builder skills) |
+| KR-000036 | report | under_investigation | 0.55 | 2026-11-21 | Study 3 (launches 2026-11-11): block-0 buyer clusters are far more common among Pump.fun graduates; post-graduation ratios at T+1h do not separate later 2x runs (low power) |
+| KR-000038 | report | historically_supported | 0.60 | 2026-11-21 | Study 3 holdout (launches 2026-11-09): block-0 buyer clusters among Pump.fun graduates replicate (89% vs 18%); 60% of graduates graduated in their creation slot; post-graduation ratios still not a runner screen |
