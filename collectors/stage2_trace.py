@@ -21,8 +21,10 @@ from collectors import client
 SEED = 7
 DAY = 86400
 SURV_MIN_TX = 10
-N_PER_GROUP = 25
-CAP_LISTED = 80
+N_PER_GROUP = int(os.environ.get("RKD_N_SURV", "25"))  # study 1: 25; holdout: trace every survivor
+CAP_LISTED = int(os.environ.get("RKD_CAP_LISTED", "80"))
+# Holdout option: only mints with a dev buy > 0 go to DexScreener (groups need dev buy > 0 anyway).
+DEVBUY_ONLY = os.environ.get("RKD_DEVBUY_ONLY") == "1"
 BASE_ANCHORS = 10  # unlisted validation draw comes from the first 10 anchors only (fixed before extension)
 N_UNLISTED_CHECK = 25
 MAX_TRACE_PAGES = 3
@@ -71,7 +73,7 @@ def trace(ata, t0):
         txs.extend({"transaction": e["transaction"], "meta": e["meta"], "blockTime": e["blockTime"],
                     "slot": e["slot"]} for e in r["data"])
         token = r.get("paginationToken")
-        if not token:
+        if not token or len(r["data"]) < 100:  # short page = end (Helius returns a token anyway)
             return txs, True
     return txs, False
 
@@ -81,6 +83,8 @@ def main(day):
     st = json.load(open(path)) if os.path.exists(path) else {"day": day, "seed": SEED}
     save = lambda: json.dump(st, open(path, "w"))
     L = launches(day)
+    if DEVBUY_ONLY:
+        L = [l for l in L if l["dev_raw"] > 0]
     by_mint = {l["mint"]: l for l in L}
     st.setdefault("dex", {}); st.setdefault("dex_checked", [])
     todo = [l["mint"] for l in L if l["mint"] not in set(st["dex_checked"])]
@@ -95,7 +99,8 @@ def main(day):
     listed = [m for m in by_mint if m in st["dex"]]
     unlisted = [m for m in by_mint if m not in st["dex"] and by_mint[m]["anchor_id"] < BASE_ANCHORS]
     rng.shuffle(listed); rng.shuffle(unlisted)
-    to_check = listed[:CAP_LISTED] + unlisted[:N_UNLISTED_CHECK]
+    to_check = unlisted[:N_UNLISTED_CHECK] + listed[:CAP_LISTED]  # same sets as before; unlisted first so the
+    # comparison group is complete even if the budget runs out
     st.setdefault("day7", {})
     for m in to_check:
         if m not in st["day7"]:

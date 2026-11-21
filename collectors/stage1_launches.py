@@ -17,12 +17,16 @@ import time
 from collectors import client
 from research import pump
 
-SEED = 20261111
+SEED = 20261111  # study-1 day D; other days use seed_for(day)
+
+
+def seed_for(day):
+    return int(day.replace("-", ""))  # 2026-11-11 -> 20261111, identical to the study-1 seed
 
 
 def anchors(day, n):
     t = calendar.timegm(time.strptime(day, "%Y-%m-%d"))
-    rng = random.Random(SEED)
+    rng = random.Random(seed_for(day))
     return [t + int(rng.random() * 86400) for _ in range(n)]
 
 
@@ -42,7 +46,7 @@ def fetch_anchor(anchor):
 
 def main(day, n=10, start=0):
     path = os.path.join(client.RAW, "stage1_{}.json".format(day))
-    state = json.load(open(path)) if os.path.exists(path) else {"day": day, "seed": SEED, "anchors": {}}
+    state = json.load(open(path)) if os.path.exists(path) else {"day": day, "seed": seed_for(day), "anchors": {}}
     for i, a in enumerate(anchors(day, n)):
         if i < start or str(i) in state["anchors"]:
             continue

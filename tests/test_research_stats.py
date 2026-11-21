@@ -49,3 +49,19 @@ class PumpParseTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class DevBuyTest(unittest.TestCase):
+    def test_devbuy_test_direction_and_groups(self):
+        from research.study1_analyze import devbuy_test
+        L, day7, dex = {}, {}, {}
+        for i in range(10):  # survivors: big dev buy, listed
+            L["S%d" % i] = {"dev_raw": (20 + i) * 10 ** 13, "anchor_id": 0}; day7["S%d" % i] = 10; dex["S%d" % i] = {}
+        for i in range(10):  # random unlisted dead: small dev buy
+            L["D%d" % i] = {"dev_raw": (1 + i) * 10 ** 12, "anchor_id": 1}; day7["D%d" % i] = 0
+        L["X"] = {"dev_raw": 5, "anchor_id": 50}; day7["X"] = 0  # outside base anchors: excluded
+        r = devbuy_test({"day7": day7, "dex": dex}, L)
+        self.assertEqual((r["n_s"], r["n_n"]), (10, 10))
+        self.assertTrue(r["replicates"])
+        self.assertLess(r["p_one_sided"], 0.001)
+        self.assertGreater(r["median_diff_ci95"][0], 0)

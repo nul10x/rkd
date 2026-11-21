@@ -17,7 +17,7 @@ import urllib.request
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 RAW = os.environ.get("RKD_RAW", os.path.join(ROOT, "data", "raw"))
-USAGE = os.path.join(RAW, "usage.json")
+USAGE = os.environ.get("RKD_USAGE", os.path.join(RAW, "usage.json"))  # one counter file per study run
 BUDGET = int(os.environ.get("RKD_CALL_BUDGET", "500"))
 RPS = float(os.environ.get("RKD_RPS", "2"))
 UA = "rkd-research/0.1"

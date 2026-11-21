@@ -46,6 +46,31 @@ def hold_events(l, txs):
             "n_out_tx": n_out, "max_balance_raw": max_bal}
 
 
+def devbuy_test(st, L, seed=13, n_boot=2000):
+    """Pre-registered KR-000006 test (fixed 2026-11-21 before holdout data was collected).
+    Survivors = every on-chain-confirmed day-7 survivor with dev buy > 0 (no trace needed).
+    Comparison = every confirmed-dead UNLISTED mint with dev buy > 0 from the random base-anchor draw.
+    One-sided Mann-Whitney U (survivors larger), alpha 0.05; median difference with a
+    two-group bootstrap 95% CI. Replicates iff one-sided p < 0.05 and the median difference > 0."""
+    import random
+    from collectors.stage2_trace import BASE_ANCHORS
+    pct = lambda m: 100 * L[m]["dev_raw"] / TOTAL_SUPPLY_RAW
+    surv = [pct(m) for m in sorted(st["day7"]) if m in L and st["day7"][m] >= SURV_MIN_TX and L[m]["dev_raw"] > 0]
+    dead = [pct(m) for m in sorted(st["day7"]) if m in L and st["day7"][m] < SURV_MIN_TX and L[m]["dev_raw"] > 0
+            and m not in st["dex"] and L[m]["anchor_id"] < BASE_ANCHORS]
+    if not surv or not dead:
+        return {"n_s": len(surv), "n_n": len(dead)}
+    u, p2, auc = mann_whitney(surv, dead)
+    p1 = p2 / 2 if auc > 0.5 else 1 - p2 / 2
+    rng = random.Random(seed)
+    diffs = sorted(statistics.median([rng.choice(surv) for _ in surv]) - statistics.median([rng.choice(dead) for _ in dead])
+                   for _ in range(n_boot))
+    diff = statistics.median(surv) - statistics.median(dead)
+    return {"n_s": len(surv), "n_n": len(dead), "median_s": statistics.median(surv), "median_n": statistics.median(dead),
+            "median_diff": diff, "median_diff_ci95": [diffs[int(0.025 * n_boot)], diffs[int(0.975 * n_boot) - 1]],
+            "U": u, "p_one_sided": p1, "AUC": auc, "replicates": p1 < 0.05 and diff > 0}
+
+
 def summarise(rows, key):
     t = [r[key] if r[key] is not None else 7 * DAY for r in rows]
     e = [r[key] is not None for r in rows]
@@ -66,6 +91,8 @@ def main(day):
     for g, ms in st["groups"].items():
         for m in ms:
             l = L[m]
+            if m not in st["traces"]:
+                continue  # not traced (budget); still counted in the dev-buy test below
             txs = json.load(open(os.path.join(client.RAW, st["traces"][m]["file"])))
             ev = hold_events(l, txs)
             rows.append(dict(group=g, mint=m, deployer=l["deployer"], anchor_id=l["anchor_id"], t0=l["t0"],
@@ -92,21 +119,23 @@ def main(day):
     out["unlisted_checked"] = len(unl_chk)
     out["unlisted_alive_day7"] = sum(1 for m in unl_chk if st["day7"][m] >= SURV_MIN_TX)
     out["unlisted_alive_ci95"] = wilson(out["unlisted_alive_day7"], len(unl_chk))
-    out["survival_rate_est"] = len(surv_all) / len(L)
-    out["survival_rate_ci95_if_unlisted_dead"] = wilson(len(surv_all), len(L))
+    denom = len(set(st.get("dex_checked") or L))  # launches eligible for the survival check (dev-buy only on holdout)
+    out["survival_denominator"] = denom
+    out["survival_rate_est"] = len(surv_all) / denom
+    out["survival_rate_ci95_if_unlisted_dead"] = wilson(len(surv_all), denom)
     X = [r for r in rows if r["group"] == "listed_dead"]
-    groups = {"survivor": S, "non_survivor": N, "listed_dead": X}
+    groups = {g: v for g, v in (("survivor", S), ("non_survivor", N), ("listed_dead", X)) if v}  # skip empty strata
     for key in ("first_out_s", "t50_s", "t100_s"):
         res = {}
         for g, grp in groups.items():
             res[g], _, _ = summarise(grp, key)
-        for other in ("non_survivor", "listed_dead"):
+        for other in [g for g in ("non_survivor", "listed_dead") if g in groups]:
             _, ts, es = summarise(S, key)
             _, to, eo = summarise(groups[other], key)
             chi2, p = logrank(ts, es, to, eo)
             res["logrank_survivor_vs_" + other] = {"chi2": chi2, "p": p}
         out[key] = res
-    for other in ("non_survivor", "listed_dead"):
+    for other in [g for g in ("non_survivor", "listed_dead") if g in groups]:
         a = [r["first_out_s"] for r in S if r["first_out_s"] is not None]
         b = [r["first_out_s"] for r in groups[other] if r["first_out_s"] is not None]
         u, p, auc = mann_whitney(a, b)
@@ -121,6 +150,7 @@ def main(day):
         out.setdefault("dev_buy_pct_median", {})[g] = statistics.median(r["dev_buy_pct"] for r in grp)
         out.setdefault("anchors", {})[g] = len({r["anchor_id"] for r in grp})
         out.setdefault("n", {})[g] = len(grp)
+    out["kr6_devbuy_test"] = devbuy_test(st, L)
     out["incomplete_traces"] = sum(1 for r in rows if not r["trace_complete"])
     out["api_calls_used"] = client.calls_used()
     sp = os.path.join(client.ROOT, "data", "exports", "study1_{}_stats.json".format(day))
