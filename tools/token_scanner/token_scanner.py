@@ -8,9 +8,9 @@ import re
 from research.study3_parse import block0, fee_payer, ordered
 
 TOOL = "token_scanner"
-VERSION = "0.2.0"
-FINDINGS = ["KR-000038", "KR-000026", "KR-000004", "KR-000015", "KR-000022", "KR-000046", "KR-000048"]
-RISK_SPEC = "docs/RISK_SIGNALS.md v1 (Researcher, 2026-11-22)"
+VERSION = "0.3.0"
+FINDINGS = ["KR-000038", "KR-000026", "KR-000004", "KR-000015", "KR-000022", "KR-000046", "KR-000048", "KR-000050"]
+RISK_SPEC = "docs/RISK_SIGNALS.md v2 (Researcher, 2026-11-22)"
 DISCLAIMER = "Measured facts and labelled risk flags only. Not a rating, not a safety verdict, not advice."
 
 B58 = re.compile(r"^[1-9A-HJ-NP-Za-km-z]{32,44}$")
@@ -322,7 +322,7 @@ FLAG_ORDER = {"fact": 0, "heuristic": 1}
 
 # Labels and records per flag, from docs/RISK_SIGNALS.md v1. "source" is the read the flag comes from.
 SIGNALS = {
-    "freeze_authority_present": ("fact · capability", ["KR-000022", "KR-000046", "KR-000047"], "helius getAccountInfo"),
+    "freeze_authority_present": ("fact · capability", ["KR-000022", "KR-000046", "KR-000050"], "helius getAccountInfo"),
     "mint_authority_present": ("fact · capability", ["KR-000026"], "helius getAccountInfo"),
     "transfer_hook": ("fact · capability", ["KR-000022", "KR-000048"], "helius getAccountInfo"),
     "permanent_delegate": ("fact · capability", ["KR-000022", "KR-000048"], "helius getAccountInfo"),
@@ -340,49 +340,54 @@ SIGNALS = {
     "top10_holder_concentration": ("heuristic · threshold not validated", ["KR-000015"], "helius getTokenLargestAccounts"),
 }
 CONTEXT = {
-    "freeze_authority_present": "published freeze abuse: 461 of 100,063 new Orca/Raydium/Meteora tokens (0.46%, CI "
-                                "0.42-0.51%, 2025-H1, lower bound); how often a retained authority is used is being "
-                                "measured (study 5)",
     "block0_buyers": "creation-slot buyer clusters: 79.5% of graduates vs 25.7% of non-graduates (n=73/300, "
                      "2026-11-11), 88.7% vs 18.0% on the holdout day (n=115/300); dev bundles and independent "
                      "snipers are mixed until study 4 (KR-000039/40) is filed",
     "same_slot_graduation": "41.1% (30/73) and 60.0% (69/115) of graduates graduated in their creation slot",
 }
 # Established quote assets that keep a freeze authority by design (RISK_SIGNALS.md sec. 1).
-KNOWN_STABLES = {"EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v": "USDC",
-                 "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB": "USDT"}
+KNOWN_STABLES = {"EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v": ("Circle", "USDC"),
+                 "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB": ("Tether", "USDT")}
+# Study 5 rates were measured on tokens up to 30 days old (KR-000050); older tokens get no rate.
+FREEZE_NEW_CONTEXT = ("in-sample, holdout pending (KR-000050, Raydium CPMM pools 2026-10-01..11-04): 248 of 3,366 "
+                      "new non-launchpad tokens kept a freeze authority (7.4%, CI 6.5-8.3%); of 231 new ones, 47 "
+                      "froze holders within 7 days (20.3%, CI 15.7-26.0%, lower bound); median first freeze 88 s "
+                      "after pool creation. Literature: 0.46% of new tokens had freeze abuse (KR-000046)")
+FREEZE_OLD_CONTEXT = ("mint older than 30 days: how often a retained freeze authority is used is not measured for "
+                      "older tokens (KR-000050 covers tokens up to 30 days old)")
 NEW_MINT_DAYS = 30
 
 
 def apply_signal_rules(mint, flags, age, sources):
-    """Attach label, records, source and fetched_at to each flag; apply the freeze-authority scope rule
-    (flag only new mints; never established stablecoins). Returns (flags, not_flagged, missing)."""
+    """Attach label, records, source and fetched_at to each flag; apply the freeze-authority rule of
+    RISK_SIGNALS.md v2: flag it on every mint of any age; the only exception is the exact USDC/USDT
+    allowlist, shown as info. Returns (flags, info, missing)."""
     fetched = {}
     for src in sources or []:
         fetched.setdefault("{} {}".format(src["provider"], src["endpoint"]), src["fetched_at"])
-    out, not_flagged, missing = [], [], []
+    out, info, missing = [], [], []
     age_s = None if not age else age.get("mint_age_s", age.get("pair_age_s"))
     for f in flags:
+        context = CONTEXT.get(f["code"])
         if f["code"] == "freeze_authority_present":
             if mint in KNOWN_STABLES:
-                not_flagged.append("freeze authority present on {} (established stablecoin that keeps it by design; "
-                                   "see permissions)".format(KNOWN_STABLES[mint]))
+                info.append("issuer can freeze: {} ({}); issuer-controlled stablecoin, not a honeypot flag "
+                            "(RISK_SIGNALS v2 allowlist, KR-000048)".format(*KNOWN_STABLES[mint]))
                 continue
             if age_s is not None and age_s > NEW_MINT_DAYS * 86400:
-                not_flagged.append("freeze authority present, but the {} is older than {} days, so it is out of "
-                                   "scope for the new-mint honeypot flag (see permissions)".format(
-                                       "mint" if "mint_age_s" in age else "oldest pair", NEW_MINT_DAYS))
-                continue
-            if age_s is None:
-                f = dict(f, text=f["text"] + "; mint age unknown, treated as new")
+                context = FREEZE_OLD_CONTEXT
+            else:
+                context = FREEZE_NEW_CONTEXT
+                if age_s is None:
+                    f = dict(f, text=f["text"] + "; mint age unknown, treated as new")
             missing.append({"field": "freeze_used", "reason": "not checked whether the authority has frozen any "
-                            "holder (needs the mint's transaction history); study 5 (KR-000047/48) is measuring it"})
+                            "holder (needs the mint's transaction history; KR-000048)"})
         label, records, source = SIGNALS.get(f["code"], (f["class"], [], None))
         g = dict(f, label=label, records=records, source=source, fetched_at=fetched.get(source))
-        if f["code"] in CONTEXT:
-            g["context"] = CONTEXT[f["code"]]
+        if context:
+            g["context"] = context
         out.append(g)
-    return out, not_flagged, missing
+    return out, info, missing
 
 
 def build_report(mint, now_s, pairs=None, mint_acct=None, largest=None, owner_accts=None, first_page=None,
@@ -417,14 +422,14 @@ def build_report(mint, now_s, pairs=None, mint_acct=None, largest=None, owner_ac
     else:
         missing.append({"field": "age", "reason": "no creation tx or pair creation time"})
     graduated = (mkt or {}).get("graduated_listing")
-    flags, not_flagged, m = apply_signal_rules(mint, flags, age, sources)
+    flags, info, m = apply_signal_rules(mint, flags, age, sources)
     missing += m
     flags.sort(key=lambda f: (FLAG_ORDER[f["class"]], f["code"]))
     return {
         "tool": TOOL, "version": VERSION, "findings": FINDINGS, "disclaimer": DISCLAIMER,
         "chain": "solana", "mint": mint, "generated_at": int(now_s),
         "risk_flags": flags,
-        "not_flagged": not_flagged,
+        "info": info,
         "risk_spec": RISK_SPEC,
         "missing": sorted(missing, key=lambda x: x["field"]),
         "permissions": facts,
@@ -472,8 +477,8 @@ def render_text(r, limit=3900):
                 L.append("  context: " + f["context"])
     else:
         L.append("- none seen in the data read (absence of a flag is not a safety verdict)")
-    for n in r.get("not_flagged") or []:
-        L.append("- not flagged: " + n)
+    for n in r.get("info") or []:
+        L.append("- info: " + n)
     p = r.get("permissions")
     if p:
         L += ["", "**Mint** {}, decimals {}, mint authority: {}, freeze authority: {}".format(

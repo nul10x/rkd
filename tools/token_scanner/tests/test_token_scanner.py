@@ -138,8 +138,8 @@ class OfflineEndToEndTest(unittest.TestCase):
         code, r = report(USDC, "usdc")
         self.assertEqual(code, 0)
         codes = [f["code"] for f in r["risk_flags"]]
-        self.assertEqual(codes, ["mint_authority_present"])  # 0.2.0: stablecoin freeze authority not flagged
-        self.assertIn("USDC", r["not_flagged"][0])
+        self.assertEqual(codes, ["mint_authority_present"])  # stablecoin freeze authority is info, not a flag
+        self.assertEqual(r["info"][0][:35], "issuer can freeze: Circle (USDC); i")
         self.assertEqual(r["permissions"]["freeze_authority"], "7dGbd2QZcCKcTndnHcTL8q7SMVXAkp688NTQYwrRCrar")
         self.assertEqual(r["permissions"]["program"], "spl-token")
         self.assertIsNone(r["holders"])
@@ -299,15 +299,46 @@ class RiskSignalsV1Test(unittest.TestCase):
         self.assertIn("0.46%", f["context"])
         self.assertIn("freeze_used", [m["field"] for m in r["missing"]])
 
-    def test_freeze_not_flagged_on_mint_older_than_30_days(self):
+    def test_v2_freeze_flagged_on_old_mint_without_rate(self):
+        """RISK_SIGNALS v2: mint age no longer removes the freeze flag (regression: 78e86fc left it unflagged)."""
         d = self._with_freeze()
         with tempfile.TemporaryDirectory() as o:
             with redirect_stdout(io.StringIO()) as out, redirect_stderr(io.StringIO()):
-                cli.main([GRAD, "--fixtures", str(d), "--now", str(NOW + 40 * 86400), "--out", o])
+                cli.main([GRAD, "--fixtures", str(d), "--now", str(NOW + 400 * 86400), "--out", o])
         r = json.loads(out.getvalue())
-        self.assertNotIn("freeze_authority_present", [f["code"] for f in r["risk_flags"]])
-        self.assertIn("older than 30 days", r["not_flagged"][0])
-        self.assertNotIn("freeze_used", [m["field"] for m in r["missing"]])
+        f = next(f for f in r["risk_flags"] if f["code"] == "freeze_authority_present")
+        self.assertIn("not measured for older tokens", f["context"])
+        self.assertNotIn("%", f["context"])
+        self.assertIn("KR-000050", f["records"])
+        self.assertEqual(r["info"], [])
+        self.assertIn("freeze_used", [m["field"] for m in r["missing"]])
+
+    def test_v2_new_mint_gets_kr50_in_sample_rate(self):
+        d = self._with_freeze()
+        _, out, _, _ = run(GRAD, d)  # mint age 10.4 days
+        f = next(f for f in json.loads(out)["risk_flags"] if f["code"] == "freeze_authority_present")
+        for bit in ("in-sample", "KR-000050", "7.4%", "20.3%", "15.7-26.0%", "88 s"):
+            self.assertIn(bit, f["context"])
+
+    def test_v2_allowlist_is_exact_and_info_only(self):
+        acct = lambda: {"value": {"owner": ts.SPL_TOKEN, "data": {"parsed": {"type": "mint", "info": {
+            "decimals": 6, "supply": "100", "mintAuthority": None, "freezeAuthority": "Frz"}}}}}
+        for mint, issuer in ((USDC, "Circle (USDC)"), ("Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB", "Tether (USDT)")):
+            r = ts.build_report(mint, NOW, mint_acct=acct())
+            self.assertEqual(r["risk_flags"], [])
+            self.assertIn("issuer can freeze: " + issuer, r["info"][0])
+        near = "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYC"  # one character off: not allowlisted
+        r = ts.build_report(near, NOW, mint_acct=acct())
+        self.assertEqual([f["code"] for f in r["risk_flags"]], ["freeze_authority_present"])
+
+    def test_v2_old_mint_transfer_hook_unchanged(self):
+        acct = {"value": {"owner": ts.TOKEN_2022, "data": {"parsed": {"type": "mint", "info": {
+            "decimals": 6, "supply": "100", "mintAuthority": None, "freezeAuthority": None,
+            "extensions": [{"extension": "transferHook", "state": {"programId": "Hook"}}]}}}}}
+        old_pair = [pair("raydium", GRAD, "P", liq=1, created=int((NOW - 400 * 86400) * 1000))]
+        r = ts.build_report(GRAD, NOW, pairs=old_pair, mint_acct=acct)
+        f = next(f for f in r["risk_flags"] if f["code"] == "transfer_hook")
+        self.assertEqual((f["label"], f["class"]), ("fact · capability", "fact"))
 
     def test_freeze_with_unknown_age_is_flagged_as_new(self):
         acct = {"value": {"owner": ts.SPL_TOKEN, "data": {"parsed": {"type": "mint", "info": {
@@ -315,6 +346,7 @@ class RiskSignalsV1Test(unittest.TestCase):
         r = ts.build_report(GRAD, NOW, mint_acct=acct)
         f = next(f for f in r["risk_flags"] if f["code"] == "freeze_authority_present")
         self.assertIn("mint age unknown, treated as new", f["text"])
+        self.assertIn("20.3%", f["context"])
         self.assertIsNone(f["fetched_at"])  # no source recorded: not invented
         self.assertIn("(helius getAccountInfo time unknown;", ts.render_text(r))  # Validator N3
 
