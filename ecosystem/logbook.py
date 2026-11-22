@@ -149,8 +149,11 @@ class Logbook:
         return self.get_row(rid)
 
     def link(self, src, dst, relation, created_by, note=None):
+        """Create a link. If it already exists and a different non-empty note is given, the note is
+        replaced and the previous one kept in link_note_history. Returns "created", "note_updated" or
+        "unchanged"."""
         with self.conn:
-            self._link(src, dst, relation, created_by, note)
+            return self._link(src, dst, relation, created_by, note)
 
     def add_source(self, rid, source):
         with self.conn:
@@ -164,9 +167,28 @@ class Logbook:
         for r in (src, dst):
             if not self.conn.execute("SELECT 1 FROM records WHERE id=?", (r,)).fetchone():
                 raise LogbookError("no such record: " + r)
-        self.conn.execute(
+        cur = self.conn.execute(
             "INSERT OR IGNORE INTO links(src,dst,relation,note,created_by,created_at) VALUES (?,?,?,?,?,?)",
             (src, dst, relation, note, by, now()))
+        if cur.rowcount:
+            return "created"
+        if not note:
+            return "unchanged"  # re-sending a link without a note never erases one
+        old = self.conn.execute("SELECT note FROM links WHERE src=? AND dst=? AND relation=?",
+                                (src, dst, relation)).fetchone()["note"]
+        if old == note:
+            return "unchanged"
+        ts = now()
+        self.conn.execute(
+            "INSERT INTO link_note_history(src,dst,relation,old_note,new_note,changed_by,changed_at) "
+            "VALUES (?,?,?,?,?,?,?)", (src, dst, relation, old, note, by, ts))
+        self.conn.execute("UPDATE links SET note=? WHERE src=? AND dst=? AND relation=?", (note, src, dst, relation))
+        return "note_updated"
+
+    def link_note_history(self, src, dst, relation):
+        return [row_dict(x) for x in self.conn.execute(
+            "SELECT old_note,new_note,changed_by,changed_at FROM link_note_history "
+            "WHERE src=? AND dst=? AND relation=? ORDER BY rowid", (src, dst, relation))]
 
     def _add_source(self, rid, s):
         if not s.get("kind") or not s.get("ref"):
@@ -189,10 +211,10 @@ class Logbook:
         r["sources"] = [row_dict(x) for x in self.conn.execute(
             "SELECT kind,ref,note,retrieved_at FROM sources WHERE record_id=?", (rid,))]
         r["links"] = [row_dict(x) for x in self.conn.execute(
-            """SELECT l.relation, 'out' AS direction, l.dst AS other, r.title, r.status FROM links l
+            """SELECT l.relation, 'out' AS direction, l.dst AS other, r.title, r.status, l.note FROM links l
                JOIN records r ON r.id=l.dst WHERE l.src=?
                UNION ALL
-               SELECT l.relation, 'in', l.src, r.title, r.status FROM links l
+               SELECT l.relation, 'in', l.src, r.title, r.status, l.note FROM links l
                JOIN records r ON r.id=l.src WHERE l.dst=?""", (rid, rid))]
         return r
 

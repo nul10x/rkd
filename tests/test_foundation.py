@@ -266,5 +266,60 @@ class FilesystemFallbackTests(unittest.TestCase):
         self.assertIn("FTS5", str(cm.exception))
 
 
+class LinkNoteTests(unittest.TestCase):
+    """Researcher request 2026-11-22: re-sending a link with a note sets the note on an existing link.
+    Before, _link used INSERT OR IGNORE and silently dropped it."""
+
+    def setUp(self):
+        self.conn = connect(":memory:")
+        self.lb = Logbook(self.conn)
+        self.a = self.lb.save(dict(FINDING))["id"]
+        self.b = self.lb.save(dict(FINDING, title="EXAMPLE: unrelated wallet funding pattern",
+                                   description="EXAMPLE DATA. Something else entirely."))["id"]
+
+    def note(self):
+        return self.conn.execute("SELECT note FROM links WHERE src=? AND dst=?", (self.a, self.b)).fetchone()["note"]
+
+    def test_note_added_to_existing_link_via_protocol(self):
+        self.lb.link(self.a, self.b, "contradicts", "researcher")
+        r = handle(self.conn, make("researcher", "logbook", "link", {
+            "src": self.a, "dst": self.b, "relation": "contradicts", "note": "EXAMPLE: different definitions"}))
+        self.assertTrue(r["payload"]["ok"])
+        self.assertEqual(r["payload"]["data"]["result"], "note_updated")
+        self.assertEqual(self.note(), "EXAMPLE: different definitions")
+        out = [l for l in self.lb.get(self.a)["links"] if l["other"] == self.b][0]
+        self.assertEqual(out["note"], "EXAMPLE: different definitions")
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM links").fetchone()[0], 1)
+
+    def test_history_is_append_only_and_keeps_old_notes(self):
+        self.assertEqual(self.lb.link(self.a, self.b, "related", "builder", "first"), "created")
+        self.assertEqual(self.lb.link(self.a, self.b, "related", "researcher", "second"), "note_updated")
+        self.assertEqual(self.lb.link(self.a, self.b, "related", "researcher", "third"), "note_updated")
+        h = self.lb.link_note_history(self.a, self.b, "related")
+        self.assertEqual([(x["old_note"], x["new_note"], x["changed_by"]) for x in h],
+                         [("first", "second", "researcher"), ("second", "third", "researcher")])
+
+    def test_same_or_missing_note_changes_nothing(self):
+        self.lb.link(self.a, self.b, "related", "builder", "keep me")
+        self.assertEqual(self.lb.link(self.a, self.b, "related", "builder", "keep me"), "unchanged")
+        self.assertEqual(self.lb.link(self.a, self.b, "related", "builder"), "unchanged")  # no note: never erases
+        self.assertEqual(self.note(), "keep me")
+        self.assertEqual(self.lb.link_note_history(self.a, self.b, "related"), [])
+
+    def test_existing_database_gets_history_table(self):
+        fd, path = tempfile.mkstemp(suffix=".db"); os.close(fd)
+        try:
+            c = connect(path)
+            c.execute("DROP TABLE link_note_history")  # a database created before this change
+            c.commit(); c.close()
+            c = connect(path)
+            self.assertIsNotNone(c.execute("SELECT name FROM sqlite_master WHERE name='link_note_history'").fetchone())
+            c.close()
+        finally:
+            for ext in ("", "-wal", "-shm"):
+                if os.path.exists(path + ext):
+                    os.remove(path + ext)
+
+
 if __name__ == "__main__":
     unittest.main()
