@@ -41,6 +41,7 @@ DEFAULT_INTERVAL = 0.5
 # Pause after a rate limit when the server sends no Retry-After. MIN_PAUSE is a floor for both cases.
 DEFAULT_PAUSE = 900.0
 MIN_PAUSE = {"geckoterminal": 1800.0}
+MIN_RETRY_PAUSE = 60.0  # floor for any server-sent Retry-After
 LOCK_TIMEOUT = 900  # seconds a process waits for another one's throttle slot
 
 _now = time.time  # patched in tests
@@ -159,7 +160,8 @@ def _pause_seconds(provider, retry_after):
     floor = MIN_PAUSE.get(provider, 0.0)
     if retry_after is None:
         return max(DEFAULT_PAUSE, floor)
-    return max(float(retry_after), floor)
+    # A Retry-After of 0 or an HTTP date already in the past must still pause: floor at MIN_RETRY_PAUSE.
+    return max(float(retry_after), floor, MIN_RETRY_PAUSE)
 
 
 def _parse_retry_after(value):
@@ -239,20 +241,40 @@ def _reserve(provider):
         c.close()
 
 
+def _update_usage(fn):
+    """Read-modify-write the usage file under the same lock as _reserve, so concurrent processes
+    sharing one usage file never lose a counted call. fn(u, c) edits u in place."""
+    c = _db()
+    try:
+        c.execute("BEGIN IMMEDIATE")
+        u = _usage()
+        out = fn(u, c)
+        _save_usage(u)
+        c.execute("COMMIT")
+        return out
+    except BaseException:
+        if c.in_transaction:
+            c.execute("ROLLBACK")
+        raise
+    finally:
+        c.close()
+
+
+def _record_error(entry):
+    _update_usage(lambda u, c: u["errors"].append(entry))
+
+
 def _record_pause(provider, label, retry_after, extra=None):
     at = _now()
     rec = {"until": at + _pause_seconds(provider, retry_after), "at": at, "label": label,
            "retry_after": retry_after}
     rec.update(extra or {})
-    u = _usage()
-    u["paused"][provider] = rec
-    _save_usage(u)
-    c = _db()
-    try:
+
+    def apply(u, c):
+        u["paused"][provider] = rec
         c.execute("INSERT OR REPLACE INTO pause(provider,until,info) VALUES (?,?,?)",
                   (provider, rec["until"], json.dumps(rec)))
-    finally:
-        c.close()
+    _update_usage(apply)
     return rec
 
 
@@ -311,9 +333,7 @@ def _fetch(provider, url, body, label):
             rec = _record_pause(provider, label, ra)
             _logbook_pause(provider, rec["until"])
             raise RateLimited("{} HTTP 429 on {}; paused for {:.0f} s".format(provider, label, rec["until"] - rec["at"]))
-        u = _usage()
-        u["errors"].append({"provider": provider, "label": label, "http": e.code, "body": text})
-        _save_usage(u)
+        _record_error({"provider": provider, "label": label, "http": e.code, "body": text})
         raise ApiError("{} HTTP {} on {}: {}".format(provider, e.code, label, text))
     if isinstance(payload, dict) and payload.get("error"):
         err = payload["error"]
@@ -324,9 +344,7 @@ def _fetch(provider, url, body, label):
             _logbook_pause(provider, rec["until"])
             raise RateLimited("{} rate limit on {}; paused for {:.0f} s: {}".format(
                 provider, label, rec["until"] - rec["at"], msg))
-        u = _usage()
-        u["errors"].append({"provider": provider, "label": label, "rpc_error": msg})
-        _save_usage(u)
+        _record_error({"provider": provider, "label": label, "rpc_error": msg})
         raise ApiError("{} error on {}: {}".format(provider, label, msg))
     return payload
 

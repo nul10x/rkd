@@ -178,6 +178,23 @@ class FailurePathTest(unittest.TestCase):
                 self.assertIn("RateLimited", reasons[f])
             self.assertEqual([s["provider"] for s in r["sources"]], ["dexscreener"])
 
+    def test_review_3_logbook_budget_errors_stop_cleanly(self):
+        """Finding 3: with RKD_LOGBOOK_COUNT=1 the ecosystem's ProviderPaused/BudgetExceeded escaped scan()."""
+        from ecosystem import tasks
+
+        class Api(cli.FixtureApi):
+            def account(self, mint):
+                raise tasks.ProviderPaused("helius reached its daily cap of 5")
+
+            def pairs(self, mint):
+                raise tasks.BudgetExceeded("T-1 over budget for api_calls (1/1)")
+        r, nothing = cli.scan(GRAD, Api(FX / "graduate"), NOW)
+        self.assertTrue(nothing)
+        reasons = {m["field"]: m["reason"] for m in r["missing"]}
+        self.assertIn("BudgetExceeded", reasons["market"])
+        for f in ("mint", "holders", "launch_context"):
+            self.assertIn("not fetched: run stopped", reasons[f])
+
     def test_nothing_fetched_exit_3(self):
         with tempfile.TemporaryDirectory() as d:
             code, out, _, _ = run(GRAD, d)
