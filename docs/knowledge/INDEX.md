@@ -4,7 +4,7 @@ Generated from the Logbook by `python3 -m research.kb_index`. Do not edit by han
 `python3 -m ecosystem.cli get KR-xxxxxx`; search with `python3 -m ecosystem.cli search "<words>"`.
 Status ladder: unverified < hypothesis < under_investigation < historically_supported < validated (or rejected).
 
-Records: 38
+Records: 59
 
 ## 1. Blockchain and on-chain analytics
 
@@ -40,6 +40,10 @@ Records: 38
 | KR-000022 | finding | unverified | 0.60 | 2026-11-21 | Token security checks for memecoins: Solana mint/freeze authority and Token-2022 extensions that enable scams |
 | KR-000023 | finding | unverified | 0.50 | 2026-11-21 | Rug-pull precursors and insider-wallet indicators: what the evidence supports at launch time |
 | KR-000037 | hypothesis | historically_supported | 0.55 | 2026-11-21 | H3c: Pump.fun graduates whose PumpSwap pool still holds a small share of supply 1 h after graduation (low liq/MC, low vol/MC) are more likely to fall >=90% from that point by day 7 |
+| KR-000045 | finding | unverified | 0.55 | 2026-11-22 | EVM honeypot tokens: measured prevalence ranges 10.7%-87.9% depending on definition and detector; sell-reversion is 72% of trap mechanisms; simulation beats static checks |
+| KR-000046 | finding | unverified | 0.50 | 2026-11-22 | Solana honeypots: freeze-authority abuse measured in 0.46% of new non-launchpad tokens (461/100,063, 2025-H1); mechanism is readable from mint state, so low base rate dominates detector value |
+| KR-000047 | report | n/a | - | 2026-11-22 | Plan, study 5: how often new Solana tokens can block sells (freeze authority, Token-2022 extensions) and how often a retained freeze authority is used within 7 days (2026-11-11 + holdout 2026-11-09) |
+| KR-000048 | observation | unverified | 0.80 | 2026-11-22 | Study 5 pilot: CPMM pool-creation fee account gives a daily pool census; LP and stablecoin mints must be excluded; one new token froze 4 buyer accounts within 25 min |
 
 ## 6. Trading psychology
 
@@ -59,18 +63,29 @@ Records: 38
 |---|---|---|---|---|---|
 | KR-000019 | finding | unverified | 0.70 | 2026-11-21 | Costs that a memecoin strategy must beat: Pump.fun fees, fixed per-tx costs, buy price impact, and evidence on strategies after costs |
 | KR-000020 | finding | unverified | 0.50 | 2026-11-21 | Organic vs artificial memecoin volume: wash volume rarely attracts real traders; new-wallet formation is the better signal |
+| KR-000055 | report | n/a | - | 2026-11-22 | Study 6 plan (pre-registered): price drift against a delayed buyer on the Pump.fun curve, for the paper-trading fill model |
+| KR-000058 | finding | historically_supported | 0.65 | 2026-11-22 | Study 6: delayed buyers on the Pump.fun curve face about zero median drift but a large tail (5-slot p90 +15% and +26% for non-graduates); constant-curve pricing fails |
+| KR-000059 | finding | unverified | 0.70 | 2026-11-22 | Paper-trading cost inputs: full Pump.fun fee table, 0.45% app Platform Fee (3.49% curve breakeven), and failed-transaction scenarios |
 
 ## 9. DEXs, launchpads and launches
 
 | id | kind | status | conf | date | title |
 |---|---|---|---|---|---|
 | KR-000021 | finding | unverified | 0.35 | 2026-11-21 | What precedes big memecoin moves and what successful launches share: fast real accumulation, then sudden wallet inflows; most shared traits are not predictive |
+| KR-000045 | finding | unverified | 0.55 | 2026-11-22 | EVM honeypot tokens: measured prevalence ranges 10.7%-87.9% depending on definition and detector; sell-reversion is 72% of trap mechanisms; simulation beats static checks |
+| KR-000046 | finding | unverified | 0.50 | 2026-11-22 | Solana honeypots: freeze-authority abuse measured in 0.46% of new non-launchpad tokens (461/100,063, 2025-H1); mechanism is readable from mint state, so low base rate dominates detector value |
+| KR-000055 | report | n/a | - | 2026-11-22 | Study 6 plan (pre-registered): price drift against a delayed buyer on the Pump.fun curve, for the paper-trading fill model |
+| KR-000058 | finding | historically_supported | 0.65 | 2026-11-22 | Study 6: delayed buyers on the Pump.fun curve face about zero median drift but a large tail (5-slot p90 +15% and +26% for non-graduates); constant-curve pricing fails |
+| KR-000059 | finding | unverified | 0.70 | 2026-11-22 | Paper-trading cost inputs: full Pump.fun fee table, 0.45% app Platform Fee (3.49% curve breakeven), and failed-transaction scenarios |
 
 ## 10. MEV, sandwiches, snipers, tx mechanics
 
 | id | kind | status | conf | date | title |
 |---|---|---|---|---|---|
 | KR-000018 | finding | unverified | 0.60 | 2026-11-21 | MEV on Solana: sandwich attacks on memecoin swaps, where they happen and what reduces exposure |
+| KR-000055 | report | n/a | - | 2026-11-22 | Study 6 plan (pre-registered): price drift against a delayed buyer on the Pump.fun curve, for the paper-trading fill model |
+| KR-000058 | finding | historically_supported | 0.65 | 2026-11-22 | Study 6: delayed buyers on the Pump.fun curve face about zero median drift but a large tail (5-slot p90 +15% and +26% for non-graduates); constant-curve pricing fails |
+| KR-000059 | finding | unverified | 0.70 | 2026-11-22 | Paper-trading cost inputs: full Pump.fun fee table, 0.45% app Platform Fee (3.49% curve breakeven), and failed-transaction scenarios |
 
 ## Standing projects (keyword match on tags)
 
@@ -78,10 +93,10 @@ Records: 38
 - **What precedes big moves**: KR-000021
 - **Organic vs artificial volume**: KR-000020
 - **Narrative identification**: KR-000025
-- **Insider wallet behaviour**: KR-000023
+- **Insider wallet behaviour**: KR-000023, KR-000039
 - **Liquidity changes vs price**: KR-000015, KR-000016, KR-000017, KR-000037
-- **Rug-pull precursors**: KR-000010, KR-000012, KR-000015, KR-000016, KR-000023, KR-000037
-- **Strategies vs fees and slippage**: KR-000019, KR-000027, KR-000028
+- **Rug-pull precursors**: KR-000010, KR-000012, KR-000015, KR-000016, KR-000023, KR-000037, KR-000046
+- **Strategies vs fees and slippage**: KR-000019, KR-000027, KR-000028, KR-000042
 
 ## Studies, plans and lessons not tagged with a division
 
@@ -116,3 +131,17 @@ Records: 38
 | KR-000035 | lesson | n/a | - | 2026-11-21 | Offline re-runs from a linked worktree overwrite shared exports; guard by backing up and restoring data/exports (new Builder skills) |
 | KR-000036 | report | under_investigation | 0.55 | 2026-11-21 | Study 3 (launches 2026-11-11): block-0 buyer clusters are far more common among Pump.fun graduates; post-graduation ratios at T+1h do not separate later 2x runs (low power) |
 | KR-000038 | report | historically_supported | 0.60 | 2026-11-21 | Study 3 holdout (launches 2026-11-09): block-0 buyer clusters among Pump.fun graduates replicate (89% vs 18%); 60% of graduates graduated in their creation slot; post-graduation ratios still not a runner screen |
+| KR-000039 | report | n/a | - | 2026-11-22 | Plan, study 4: were Pump.fun block-0 buyers funded by the deployer? Funding-graph test, graduates vs non-graduates (2026-11-11 + holdout 2026-11-09) |
+| KR-000040 | observation | unverified | 0.80 | 2026-11-22 | Study 4 pilot: system-transfer parsing misses program and wrapped-SOL funding; 33 of 45 block-0 buyer pages are full 100-tx pages |
+| KR-000041 | tool | n/a | - | 2026-11-22 | Tool token_scanner 0.2.0 + Discord bot /scan: labelled risk flags (RISK_SIGNALS v1), holders excl. venues, mint permission facts, Pump.fun block-0 context |
+| KR-000042 | report | n/a | - | 2026-11-22 | Validator audit: paper trading readiness for RKD (no strategy ready; engine benchmark first; master lacks the research code) |
+| KR-000043 | experiment | n/a | - | 2026-11-22 | Tool QA: token_scanner 0.1.0 offline (97 tests pass; bug B1: pool counted as top holder when DEX Screener lists no pair) |
+| KR-000044 | experiment | n/a | - | 2026-11-22 | Tool QA retest: token_scanner 0.1.1 (15cc08c) fixes B1, N1, N2 from KR-000043 |
+| KR-000049 | experiment | n/a | - | 2026-11-22 | Tool QA: token_scanner 0.2.0 (78e86fc) vs RISK_SIGNALS.md v1: no bugs; freeze scope rule matches spec; one spec question |
+| KR-000050 | report | under_investigation | 0.40 | 2026-11-22 | Study 5 primary (Raydium CPMM pools 2026-10-01..11-04): 7.4% of new non-launchpad tokens kept a freeze authority; 20.3% of those froze holders within 7 days; Pump.fun 0 of 1,000 |
+| KR-000051 | report | under_investigation | 0.50 | 2026-11-22 | Study 5 holdout (CPMM pools 2026-11-05..11-14): freeze-retained share replicates (6.7% vs 7.4%) but the freeze-use rate does not (7.4% vs 20.3%); weekly rate ranges 5-34% |
+| KR-000052 | experiment | n/a | - | 2026-11-22 | Tool QA retest: token_scanner 0.3.0 (3a4036a) matches RISK_SIGNALS v2 freeze rule and allowlist; no bugs |
+| KR-000053 | experiment | n/a | - | 2026-11-22 | Tool QA retest: token_scanner 0.3.1 (258a7ef) matches RISK_SIGNALS v3 (freeze-use rate as dated range); no bugs |
+| KR-000054 | tool | n/a | - | 2026-11-22 | Tool ecosystem 1.2: link notes can be added or changed on existing links (append-only link_note_history) |
+| KR-000056 | lesson | n/a | - | 2026-11-22 | Local paper trading engine architecture v2: slot-batched fills on arrival state, effective-reserve AMM math, two impact scenarios, replay recovery; build held |
+| KR-000057 | experiment | n/a | - | 2026-11-22 | Design review: paper engine architecture d1949f3 needs 4 critical fixes; cached swaps show raw PumpSwap vault misprices most trades |
