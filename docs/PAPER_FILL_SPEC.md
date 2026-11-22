@@ -2,10 +2,10 @@
 
 Adds measured inputs to `docs/PAPER_TRADING_PLAN.md` (Validator, KR-000042). Evidence: KR-000058 (Study 6),
 KR-000059 (costs). v2 addressed Validator findings S1-S5 (KR-000061). v2.1 addressed the spec items in KR-000062
-(B4, H2, M2, M3, buy gap). v2.2 addresses KR-000063 (min-out timing, exit attempt limit). **Not cleared for fill code until Validator says so.**
+(B4, H2, M2, M3, buy gap). v2.2 addresses KR-000063 (min-out timing, exit attempt limit). **Fill rules cleared for fill code at spec `6d1ff8e` (KR-000064); this later commit only pins the guide.**
 
-**Who owns what (S5).** `docs/PAPER_ENGINE_ARCHITECTURE.md` ("the guide", branch `docs/paper-engine-architecture`;
-not cleared yet, and this line gets its exact commit hash once Validator clears it)
+**Who owns what (S5).** `docs/PAPER_ENGINE_ARCHITECTURE.md` ("the guide", branch `docs/paper-engine-architecture`
+@ `b784476`, cleared by Validator in KR-000064)
 owns **fill order**: arrival, coverage, same-slot handling, exits, own impact and statuses (sections 3.2-3.5).
 This spec owns **fees, cost and delay scenarios, and parsing**. If they appear to conflict on fill order, the guide wins.
 
