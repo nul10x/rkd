@@ -29,6 +29,9 @@ Optional later: `numpy`/`pandas` only if the statistics outgrow the standard lib
 - `record_versions` stores a full JSON snapshot of the record before each update.
 - `sources` stores the url, tx, wallet, dataset, file and api references for each record.
 - `links` stores typed relations between records: related, supports, contradicts, supersedes, derived_from, implements, tests.
+  A `link` request for a link that already exists, with a different non-empty note, replaces the note; the old
+  note is kept in the append-only `link_note_history` table. Without a note it changes nothing. The reply's
+  `result` is `created`, `note_updated` or `unchanged`.
 - `records_fts` is an FTS5 index with porter stemming, kept in sync by triggers.
 - `tasks` is the queue. Each task has an objective, a done condition, a JSON budget, usage counters and a progress checkpoint.
 - `messages` keeps every protocol message, both requests and replies.

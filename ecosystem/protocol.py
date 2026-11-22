@@ -74,8 +74,7 @@ def handle(conn, msg):
         elif t == "update_record":
             data = lb.update(p["id"], p["changes"], msg["from"], p.get("note"), p.get("sources", []))
         elif t == "link":
-            lb.link(p["src"], p["dst"], p["relation"], msg["from"], p.get("note"))
-            data = {"linked": True}
+            data = {"linked": True, "result": lb.link(p["src"], p["dst"], p["relation"], msg["from"], p.get("note"))}
         elif t == "query":
             data = {"results": lb.search(p.get("text"), p.get("category"), p.get("status"),
                                          p.get("kind"), p.get("limit", 10))}

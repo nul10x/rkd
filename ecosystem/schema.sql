@@ -73,6 +73,17 @@ CREATE TABLE IF NOT EXISTS links (
   PRIMARY KEY (src, dst, relation)
 );
 
+-- Append-only: every note a link had before it was changed, with who changed it and when.
+CREATE TABLE IF NOT EXISTS link_note_history (
+  src        TEXT NOT NULL,
+  dst        TEXT NOT NULL,
+  relation   TEXT NOT NULL,
+  old_note   TEXT,
+  new_note   TEXT,
+  changed_by TEXT NOT NULL,
+  changed_at TEXT NOT NULL
+);
+
 -- Full-text index over records (external content, kept in sync by triggers).
 CREATE VIRTUAL TABLE IF NOT EXISTS records_fts USING fts5(
   title, description, evidence, methodology, limitations, category, tags,
