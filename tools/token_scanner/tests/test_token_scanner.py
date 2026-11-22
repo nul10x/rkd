@@ -138,7 +138,9 @@ class OfflineEndToEndTest(unittest.TestCase):
         code, r = report(USDC, "usdc")
         self.assertEqual(code, 0)
         codes = [f["code"] for f in r["risk_flags"]]
-        self.assertEqual(codes, ["freeze_authority_present", "mint_authority_present"])
+        self.assertEqual(codes, ["mint_authority_present"])  # 0.2.0: stablecoin freeze authority not flagged
+        self.assertIn("USDC", r["not_flagged"][0])
+        self.assertEqual(r["permissions"]["freeze_authority"], "7dGbd2QZcCKcTndnHcTL8q7SMVXAkp688NTQYwrRCrar")
         self.assertEqual(r["permissions"]["program"], "spl-token")
         self.assertIsNone(r["holders"])
         self.assertIsNone(r["launch_context"])  # not a Pump.fun launch, no creation-page call
@@ -269,6 +271,65 @@ class ValidatorReportTest(unittest.TestCase):
         reasons = {m["field"]: m["reason"] for m in r["missing"]}
         self.assertIn("another mint", reasons["mint"])
         self.assertIn("another mint", reasons["market"])
+
+
+class RiskSignalsV1Test(unittest.TestCase):
+    """docs/RISK_SIGNALS.md v1 (Researcher): labels, records, timestamps, freeze-authority scope rule."""
+
+    def _with_freeze(self):
+        d = Path(tempfile.mkdtemp())
+        for f in (FX / "graduate").iterdir():
+            (d / f.name).write_text(f.read_text(encoding="utf-8"), encoding="utf-8")
+        snap = json.loads((d / "account.json").read_text(encoding="utf-8"))
+        snap["response"]["result"]["value"]["data"]["parsed"]["info"]["freezeAuthority"] = "FrzAuth1111111111111111111111111111111111111"
+        (d / "account.json").write_text(json.dumps(snap), encoding="utf-8")
+        return d
+
+    def test_freeze_flagged_on_new_mint_with_label_records_and_time(self):
+        d = self._with_freeze()
+        _, out, _, _ = run(GRAD, d)  # graduate fixture: mint age 10.4 days
+        r = json.loads(out)
+        f = next(f for f in r["risk_flags"] if f["code"] == "freeze_authority_present")
+        self.assertEqual(f["label"], "fact · capability")
+        self.assertIn("KR-000046", f["records"])
+        self.assertEqual(f["source"], "helius getAccountInfo")
+        self.assertIsInstance(f["fetched_at"], (int, float))
+        self.assertIn("can freeze holders", f["text"])
+        self.assertIn("not a confirmed honeypot", f["text"])
+        self.assertIn("0.46%", f["context"])
+        self.assertIn("freeze_used", [m["field"] for m in r["missing"]])
+
+    def test_freeze_not_flagged_on_mint_older_than_30_days(self):
+        d = self._with_freeze()
+        with tempfile.TemporaryDirectory() as o:
+            with redirect_stdout(io.StringIO()) as out, redirect_stderr(io.StringIO()):
+                cli.main([GRAD, "--fixtures", str(d), "--now", str(NOW + 40 * 86400), "--out", o])
+        r = json.loads(out.getvalue())
+        self.assertNotIn("freeze_authority_present", [f["code"] for f in r["risk_flags"]])
+        self.assertIn("older than 30 days", r["not_flagged"][0])
+        self.assertNotIn("freeze_used", [m["field"] for m in r["missing"]])
+
+    def test_freeze_with_unknown_age_is_flagged_as_new(self):
+        acct = {"value": {"owner": ts.SPL_TOKEN, "data": {"parsed": {"type": "mint", "info": {
+            "decimals": 6, "supply": "100", "mintAuthority": None, "freezeAuthority": "Frz"}}}}}
+        r = ts.build_report(GRAD, NOW, mint_acct=acct)
+        f = next(f for f in r["risk_flags"] if f["code"] == "freeze_authority_present")
+        self.assertIn("mint age unknown, treated as new", f["text"])
+        self.assertIsNone(f["fetched_at"])  # no source recorded: not invented
+
+    def test_every_flag_has_label_and_records(self):
+        for mint, case in ((GRAD, "graduate"), (CURVE, "curve"), (USDC, "usdc")):
+            _, r = report(mint, case)
+            for f in r["risk_flags"]:
+                self.assertTrue(f["label"] and f["records"] and f["source"], f)
+            self.assertIn("RISK_SIGNALS", r["risk_spec"])
+
+    def test_no_flag_text_says_not_seen_not_safe(self):
+        r = ts.build_report(GRAD, NOW)
+        text = ts.render_text(r)
+        self.assertIn("none seen in the data read", text)
+        for word in ("safe ", "legit", "rug-proof", "will pump"):
+            self.assertNotIn(word, text.lower().replace("not a safety verdict", ""))
 
 
 if __name__ == "__main__":

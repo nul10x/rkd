@@ -8,8 +8,9 @@ import re
 from research.study3_parse import block0, fee_payer, ordered
 
 TOOL = "token_scanner"
-VERSION = "0.1.1"
-FINDINGS = ["KR-000038", "KR-000026", "KR-000004", "KR-000015"]
+VERSION = "0.2.0"
+FINDINGS = ["KR-000038", "KR-000026", "KR-000004", "KR-000015", "KR-000022", "KR-000046", "KR-000048"]
+RISK_SPEC = "docs/RISK_SIGNALS.md v1 (Researcher, 2026-11-22)"
 DISCLAIMER = "Measured facts and labelled risk flags only. Not a rating, not a safety verdict, not advice."
 
 B58 = re.compile(r"^[1-9A-HJ-NP-Za-km-z]{32,44}$")
@@ -191,8 +192,9 @@ def mint_facts(acct):
         flags.append(_flag("mint_authority_present", "fact", "supply can be increased by {}".format(
             facts["mint_authority"]), {"mintAuthority": facts["mint_authority"]}))
     if facts["freeze_authority"]:
-        flags.append(_flag("freeze_authority_present", "fact", "holder accounts can be frozen by {} "
-                           "(a frozen holder cannot sell)".format(facts["freeze_authority"]),
+        flags.append(_flag("freeze_authority_present", "fact", "can freeze holders: authority {} can freeze any "
+                           "holder's account, and a frozen holder cannot sell (capability, not a confirmed "
+                           "honeypot)".format(facts["freeze_authority"]),
                            {"freezeAuthority": facts["freeze_authority"]}))
     for e in exts:
         f = _ext_flag(e)
@@ -318,6 +320,70 @@ def launch_context(first_page, mint):
 
 FLAG_ORDER = {"fact": 0, "heuristic": 1}
 
+# Labels and records per flag, from docs/RISK_SIGNALS.md v1. "source" is the read the flag comes from.
+SIGNALS = {
+    "freeze_authority_present": ("fact · capability", ["KR-000022", "KR-000046", "KR-000047"], "helius getAccountInfo"),
+    "mint_authority_present": ("fact · capability", ["KR-000026"], "helius getAccountInfo"),
+    "transfer_hook": ("fact · capability", ["KR-000022", "KR-000048"], "helius getAccountInfo"),
+    "permanent_delegate": ("fact · capability", ["KR-000022", "KR-000048"], "helius getAccountInfo"),
+    "default_frozen": ("fact · capability", ["KR-000022", "KR-000048"], "helius getAccountInfo"),
+    "non_transferable": ("fact · capability", ["KR-000022", "KR-000048"], "helius getAccountInfo"),
+    "transfer_fee": ("fact · capability", ["KR-000026"], "helius getAccountInfo"),
+    "pausable": ("fact · capability", ["KR-000026"], "helius getAccountInfo"),
+    "mint_close_authority": ("fact · capability", ["KR-000026"], "helius getAccountInfo"),
+    "confidential_transfers": ("fact · capability", ["KR-000026"], "helius getAccountInfo"),
+    "unrecognised_extension": ("fact · unclassified", ["KR-000026"], "helius getAccountInfo"),
+    "block0_buyers": ("fact; meaning is a replicated association", ["KR-000036", "KR-000038"],
+                      "helius getTransactionsForAddress(asc)"),
+    "same_slot_graduation": ("fact", ["KR-000036", "KR-000038"], "helius getTransactionsForAddress(asc)"),
+    "top1_holder_concentration": ("heuristic · threshold not validated", ["KR-000015"], "helius getTokenLargestAccounts"),
+    "top10_holder_concentration": ("heuristic · threshold not validated", ["KR-000015"], "helius getTokenLargestAccounts"),
+}
+CONTEXT = {
+    "freeze_authority_present": "published freeze abuse: 461 of 100,063 new Orca/Raydium/Meteora tokens (0.46%, CI "
+                                "0.42-0.51%, 2025-H1, lower bound); how often a retained authority is used is being "
+                                "measured (study 5)",
+    "block0_buyers": "creation-slot buyer clusters: 79.5% of graduates vs 25.7% of non-graduates (n=73/300, "
+                     "2026-11-11), 88.7% vs 18.0% on the holdout day (n=115/300); dev bundles and independent "
+                     "snipers are mixed until study 4 (KR-000039/40) is filed",
+    "same_slot_graduation": "41.1% (30/73) and 60.0% (69/115) of graduates graduated in their creation slot",
+}
+# Established quote assets that keep a freeze authority by design (RISK_SIGNALS.md sec. 1).
+KNOWN_STABLES = {"EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v": "USDC",
+                 "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB": "USDT"}
+NEW_MINT_DAYS = 30
+
+
+def apply_signal_rules(mint, flags, age, sources):
+    """Attach label, records, source and fetched_at to each flag; apply the freeze-authority scope rule
+    (flag only new mints; never established stablecoins). Returns (flags, not_flagged, missing)."""
+    fetched = {}
+    for src in sources or []:
+        fetched.setdefault("{} {}".format(src["provider"], src["endpoint"]), src["fetched_at"])
+    out, not_flagged, missing = [], [], []
+    age_s = None if not age else age.get("mint_age_s", age.get("pair_age_s"))
+    for f in flags:
+        if f["code"] == "freeze_authority_present":
+            if mint in KNOWN_STABLES:
+                not_flagged.append("freeze authority present on {} (established stablecoin that keeps it by design; "
+                                   "see permissions)".format(KNOWN_STABLES[mint]))
+                continue
+            if age_s is not None and age_s > NEW_MINT_DAYS * 86400:
+                not_flagged.append("freeze authority present, but the {} is older than {} days, so it is out of "
+                                   "scope for the new-mint honeypot flag (see permissions)".format(
+                                       "mint" if "mint_age_s" in age else "oldest pair", NEW_MINT_DAYS))
+                continue
+            if age_s is None:
+                f = dict(f, text=f["text"] + "; mint age unknown, treated as new")
+            missing.append({"field": "freeze_used", "reason": "not checked whether the authority has frozen any "
+                            "holder (needs the mint's transaction history); study 5 (KR-000047/48) is measuring it"})
+        label, records, source = SIGNALS.get(f["code"], (f["class"], [], None))
+        g = dict(f, label=label, records=records, source=source, fetched_at=fetched.get(source))
+        if f["code"] in CONTEXT:
+            g["context"] = CONTEXT[f["code"]]
+        out.append(g)
+    return out, not_flagged, missing
+
 
 def build_report(mint, now_s, pairs=None, mint_acct=None, largest=None, owner_accts=None, first_page=None,
                  sources=None, errors=None):
@@ -351,11 +417,15 @@ def build_report(mint, now_s, pairs=None, mint_acct=None, largest=None, owner_ac
     else:
         missing.append({"field": "age", "reason": "no creation tx or pair creation time"})
     graduated = (mkt or {}).get("graduated_listing")
+    flags, not_flagged, m = apply_signal_rules(mint, flags, age, sources)
+    missing += m
     flags.sort(key=lambda f: (FLAG_ORDER[f["class"]], f["code"]))
     return {
         "tool": TOOL, "version": VERSION, "findings": FINDINGS, "disclaimer": DISCLAIMER,
         "chain": "solana", "mint": mint, "generated_at": int(now_s),
         "risk_flags": flags,
+        "not_flagged": not_flagged,
+        "risk_spec": RISK_SPEC,
         "missing": sorted(missing, key=lambda x: x["field"]),
         "permissions": facts,
         "holders": hold,
@@ -393,9 +463,17 @@ def render_text(r, limit=3900):
          "_{}_".format(r["disclaimer"]), "", "**Risk flags** (facts first, then heuristics)"]
     if r["risk_flags"]:
         for f in r["risk_flags"]:
-            L.append("- [{}] {}".format(f["class"], f["text"]))
+            src = ""
+            if f.get("source"):
+                src = " ({}{}; {})".format(f["source"], " <t:{}:R>".format(int(f["fetched_at"]))
+                                           if f.get("fetched_at") else "", ", ".join(f.get("records") or []))
+            L.append("- [{}] {}{}".format(f.get("label", f["class"]), f["text"], src))
+            if f.get("context"):
+                L.append("  context: " + f["context"])
     else:
-        L.append("- none detected by the checks this tool runs (that is not a safety verdict)")
+        L.append("- none seen in the data read (absence of a flag is not a safety verdict)")
+    for n in r.get("not_flagged") or []:
+        L.append("- not flagged: " + n)
     p = r.get("permissions")
     if p:
         L += ["", "**Mint** {}, decimals {}, mint authority: {}, freeze authority: {}".format(

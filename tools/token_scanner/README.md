@@ -1,6 +1,6 @@
 # token_scanner
 
-Version 0.1.1 · based on Logbook findings KR-000038 (historically_supported, n=415) and design KR-000026 ·
+Version 0.2.0 · based on Logbook findings KR-000038 (historically_supported, n=415) and design KR-000026 ·
 also uses KR-000004 (DEX Screener gaps) and KR-000015 (ratios are not validated screens).
 
 Measured facts and labelled risk flags for one Solana token. **Not a rating, not a safety verdict, not advice.**
@@ -64,6 +64,21 @@ Calls per scan:
 - **Ratios:** liquidity/MC and volume/MC, shown as descriptive only.
 - **Age:** from the creation transaction when read, else DEX Screener pair age (labelled as pair age).
 
+## Risk signals (docs/RISK_SIGNALS.md v1, Researcher, 2026-11-22)
+Every flag carries `label` (fact · capability, fact, fact whose meaning is a replicated association, or
+heuristic), `records` (Logbook ids), `source` (the read it comes from) and that read's `fetched_at`. Flags with
+published rates carry `context` with n and CI. No flag means "none seen in the data read", never safe.
+
+| Spec signal | In 0.2.0 |
+|---|---|
+| Freeze authority retained | ✓ "can freeze holders" (capability, not a confirmed honeypot). Flagged only for new mints: never for USDC/USDT, and not when the mint (or its oldest pair) is older than 30 days; those go to `not_flagged`. Unknown age is treated as new. |
+| Freeze authority used (event) | — not checked; reported in `missing` as `freeze_used` whenever the freeze flag is raised |
+| Token-2022 sell-block capabilities | ✓ transfer hook, permanent delegate, default-frozen, non-transferable (plus fee, pausable, close authority) |
+| Block-0 cluster, same-slot graduation | ✓ with KR-000036/38 rates as context |
+| Dev funded block-0 buyers | — waits for study 4 (KR-000039/40) |
+| Thin pool 1 h after graduation, dev exit within 1 h | — not shown: low information or mechanical (KR-000037, KR-000012/23) |
+| EVM honeypot simulation, slippage > 10 % | — out of scope (Solana only; the scanner does not trade) |
+
 ## Testing
 `python3 -m unittest discover -s . -t . -v` from the repo root. Scanner tests:
 `tools/token_scanner/tests/` (16 tests): pure logic, three offline end-to-end cases on real responses
@@ -90,6 +105,8 @@ Measured run (live, 2026-11-22, MacBook, Python 3.9.6): Pump.fun graduate `FiVRb
 - One chain (Solana). No history: each scan is a snapshot; snapshots are kept in `data/raw/*/live/`.
 
 ## Version history
+- 0.2.0 (2026-11-22): risk signals v1 from docs/RISK_SIGNALS.md: labels, records, sources and timestamps on
+  every flag; freeze authority scoped to new mints, stablecoins excluded; `freeze_used` reported as not checked.
 - 0.1.1 (2026-11-22): Validator report KR-000043: venues unknown when no pair is listed (B1); creation-slot
   wording 'received (net)' (N1); fixtures checked against the requested mint (N2).
 - 0.1.0 (2026-11-22): first version. Adds `collectors/client.py` `live()`.
