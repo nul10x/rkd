@@ -4,6 +4,7 @@ The bot is only the front door (docs/BOT_ARCHITECTURE.md): check who asked, vali
 run the tool in its own process, post the result. No analysis happens here.
 """
 import asyncio
+import json
 import os
 import sys
 import time
@@ -13,7 +14,8 @@ from tools.token_scanner import token_scanner as ts
 
 ROOT = Path(__file__).resolve().parents[1]
 SCAN_TIMEOUT_S = 120
-DISCORD_LIMIT = 4000  # embed description limit is 4096
+DISCORD_LIMIT = 1900  # plain message content is capped at 2000 chars by Discord; keep a margin
+MAX_MESSAGES = 3      # a long report is split on line breaks into at most this many messages
 
 _locks = {}
 
@@ -60,21 +62,61 @@ async def run_scanner(mint, timeout=SCAN_TIMEOUT_S, env=None, argv=None):
     return proc.returncode, out.decode("utf-8", "replace"), err.decode("utf-8", "replace")
 
 
+def failure_reasons(out):
+    """The 'missing' reasons from the tool output (JSON or --text), without paths or raw data."""
+    out = (out or "").strip()
+    try:
+        rep = json.loads(out)
+        items = ["{}: {}".format(m.get("field"), m.get("reason")) for m in rep.get("missing") or []]
+    except ValueError:
+        lines = out.splitlines()
+        start = next((i for i, l in enumerate(lines) if l.startswith("**Missing")), None)
+        items = [l[2:] for l in lines[start + 1:] if l.startswith("- ")] if start is not None else []
+        items = [i for i in items if not i.startswith("Sources")]
+    return items
+
+
+def split_message(text, limit=DISCORD_LIMIT, max_parts=MAX_MESSAGES):
+    """Split on line breaks into parts of at most `limit` chars; the last part is cut if needed."""
+    parts, cur = [], ""
+    for line in text.splitlines():
+        while len(line) > limit:  # a single over-long line
+            if cur:
+                parts.append(cur)
+                cur = ""
+            parts.append(line[:limit])
+            line = line[limit:]
+        if cur and len(cur) + 1 + len(line) > limit:
+            parts.append(cur)
+            cur = line
+        else:
+            cur = line if not cur else cur + "\n" + line
+    if cur or not parts:
+        parts.append(cur)
+    if len(parts) > max_parts:
+        parts = parts[:max_parts]
+        tail = "\n…(truncated; full report saved in data/exports/token_scanner/)"
+        parts[-1] = parts[-1][:limit - len(tail)] + tail
+    return parts
+
+
 def format_result(mint, code, out, err):
-    """Map the tool's exit code to a message. Never invent content: failures say what failed."""
+    """Map the tool's exit code to a message. Never invent content: failures say what failed.
+    Returns a list of Discord-sized messages."""
     if code == 0 and out.strip():
         text = out.strip()
     elif code == 2:
         text = "Not a valid Solana address: `{}`".format(mint[:60])
     elif code == 3:
-        text = "Scan of `{}` fetched nothing (all sources failed or are paused).\n{}".format(
-            mint, (out.strip() or err.strip())[-1500:])
+        reasons = failure_reasons(out) or ["no reason reported"]
+        text = "Scan of `{}` fetched nothing (all sources failed or are paused):\n{}".format(
+            mint, "\n".join("- " + r[:300] for r in reasons[:10]))
     elif code is None:
         text = "Scan of `{}` stopped: {}.".format(mint, err.strip())
     else:
         last = err.strip().splitlines()[-1:] or ["no error output"]
         text = "Scan of `{}` failed (exit {}): {}".format(mint, code, last[0][:500])
-    return text if len(text) <= DISCORD_LIMIT else text[:DISCORD_LIMIT - 15] + "\n…(truncated)"
+    return split_message(text)
 
 
 async def handle_scan(interaction, mint, cfg, runner=run_scanner, send_text=None):
@@ -91,10 +133,12 @@ async def handle_scan(interaction, mint, cfg, runner=run_scanner, send_text=None
     busy = lock.locked()
     async with lock:
         code, out, err = await runner(mint)
-    text = format_result(mint, code, out, err)
+    parts = format_result(mint, code, out, err)
     if busy:
-        text = "(waited for an earlier scan to finish)\n" + text
-    await (send_text or interaction.followup.send)(text)
+        parts = split_message("(waited for an earlier scan to finish)\n" + "\n".join(parts))
+    send = send_text or interaction.followup.send
+    for part in parts:
+        await send(part)
     return "ok" if code == 0 else "failed"
 
 
@@ -104,7 +148,6 @@ def status_text(started_at, raw_dir=None):
     usage = raw / "usage_token_scanner_{}.json".format(day)
     calls = "0"
     if usage.exists():
-        import json
         try:
             calls = str(json.loads(usage.read_text(encoding="utf-8")).get("calls", "?"))
         except ValueError:

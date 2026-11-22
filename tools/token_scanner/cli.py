@@ -20,11 +20,13 @@ import time
 from pathlib import Path
 
 from collectors import client
+from ecosystem import tasks
 from . import token_scanner as ts
 
 ROOT = Path(__file__).resolve().parents[2]
 FULL = {"transactionDetails": "full", "encoding": "jsonParsed", "maxSupportedTransactionVersion": 1}
-STOP = (client.RateLimited, client.BudgetExceeded)
+# Logbook counting (RKD_LOGBOOK_COUNT=1) raises the ecosystem's own budget/pause errors; they stop the run too.
+STOP = (client.RateLimited, client.BudgetExceeded, tasks.BudgetExceeded, tasks.ProviderPaused)
 
 
 class LiveApi:

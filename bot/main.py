@@ -17,7 +17,10 @@ from pathlib import Path
 
 from bot import handlers
 
-LOCK = Path(os.environ.get("RKD_BOT_LOCK", str(Path.home() / ".rkd" / "bot.lock")))
+def lock_path(env=None):
+    """Read at call time, after RKD_BOT_ENV_FILE is loaded, so RKD_BOT_LOCK in that file applies."""
+    env = os.environ if env is None else env
+    return Path(env.get("RKD_BOT_LOCK") or str(Path.home() / ".rkd" / "bot.lock"))
 
 
 def load_env_file(path, env=None):
@@ -45,8 +48,9 @@ def load_key_files(env=None):
     return env
 
 
-def take_lock(path=LOCK):
+def take_lock(path=None):
     """Exclusive, released by the OS when the process dies. Returns the open file or None if held."""
+    path = Path(path) if path else lock_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     f = open(path, "a+")
     try:
@@ -114,7 +118,7 @@ def main():
         print("warning: no DISCORD_ALLOWED_USER_IDS / _ROLE_IDS set; every command will be refused", file=sys.stderr)
     lock = take_lock()
     if lock is None:
-        print("another bot instance holds {}; exiting".format(LOCK), file=sys.stderr)
+        print("another bot instance holds {}; exiting".format(lock_path()), file=sys.stderr)
         return 0
     build_client(cfg).run(token)
     return 0

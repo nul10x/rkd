@@ -1,11 +1,13 @@
 """Bot tests: thin handlers driven by fake interactions; one real subprocess run on offline fixtures."""
 import asyncio
 import io
+import json
 import os
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from bot import handlers, main
 
@@ -38,6 +40,8 @@ class Interaction:
         self.log.append(("defer",))
 
     async def send(self, text):
+        if len(text) > 2000:  # what Discord does: HTTP 400, code 50035
+            raise RuntimeError("400 Bad Request (error code: 50035): content must be 2000 or fewer in length")
         self.log.append(("followup", text))
 
 
@@ -123,15 +127,39 @@ class HandlerTest(unittest.IsolatedAsyncioTestCase):
                                                     argv=[sys.executable, "-c", "import time; time.sleep(30)"])
         self.assertLess(asyncio.get_running_loop().time() - t, 10)
         self.assertIsNone(code)
-        self.assertIn("stopped: timed out", handlers.format_result(GRAD, code, out, err))
+        self.assertIn("stopped: timed out", handlers.format_result(GRAD, code, out, err)[0])
 
 
 class FormatTest(unittest.TestCase):
     def test_exit_codes(self):
-        self.assertIn("Not a valid", handlers.format_result("x", 2, "", ""))
-        self.assertIn("fetched nothing", handlers.format_result(GRAD, 3, "", "all paused"))
-        self.assertIn("failed (exit 1)", handlers.format_result(GRAD, 1, "", "Traceback\nKeyError: 'x'"))
-        self.assertLessEqual(len(handlers.format_result(GRAD, 0, "a" * 9000, "")), handlers.DISCORD_LIMIT)
+        self.assertIn("Not a valid", handlers.format_result("x", 2, "", "")[0])
+        self.assertIn("fetched nothing", handlers.format_result(GRAD, 3, "", "all paused")[0])
+        self.assertIn("failed (exit 1)", handlers.format_result(GRAD, 1, "", "Traceback\nKeyError: 'x'")[0])
+        parts = handlers.format_result(GRAD, 0, "a" * 9000, "")
+        self.assertLessEqual(len(parts), handlers.MAX_MESSAGES)
+        self.assertTrue(all(len(x) <= 2000 for x in parts))
+
+    def test_review_1_every_message_fits_discord_content_limit(self):
+        """Regression (review finding 1): 2001-3900 char reports raised HTTP 400 50035 in followup.send."""
+        report = "\n".join("- [fact] line {} ".format(i) + "x" * 60 for i in range(30))  # ~2400 chars
+        self.assertGreater(len(report), 2000)
+        parts = handlers.format_result(GRAD, 0, report, "")
+        self.assertGreater(len(parts), 1)
+        self.assertTrue(all(len(x) <= 2000 for x in parts), [len(x) for x in parts])
+        self.assertEqual("\n".join(parts), report)  # nothing lost when it fits in MAX_MESSAGES
+
+    def test_review_5_exit_3_posts_reasons_not_paths(self):
+        """Regression (review finding 5): exit 3 posted the JSON tail with local raw paths."""
+        rep = {"missing": [{"field": "market", "reason": "not fetched: RateLimited: dexscreener paused"}],
+               "sources": [{"raw_path": "/Users/someone/data/raw/helius/live/x.json"}], "mint": GRAD}
+        msg = "\n".join(handlers.format_result(GRAD, 3, json.dumps(rep), ""))
+        self.assertIn("market: not fetched: RateLimited", msg)
+        self.assertNotIn("/Users/", msg)
+        self.assertNotIn("raw_path", msg)
+        text = "**Scan** x\n\n**Missing or unreliable**\n- mint: fetch failed: boom\n\nSources: helius /Users/a"
+        msg = "\n".join(handlers.format_result(GRAD, 3, text, ""))
+        self.assertIn("mint: fetch failed: boom", msg)
+        self.assertNotIn("/Users/", msg)
 
 
 class StartupTest(unittest.TestCase):
@@ -160,6 +188,23 @@ class StartupTest(unittest.TestCase):
                                   cwd=str(handlers.ROOT)).returncode
             self.assertEqual(code, 0)
             first.close()
+
+    def test_review_6_lock_path_read_after_env_file(self):
+        """Regression (review finding 6): LOCK was read at import, so RKD_BOT_LOCK from the env file was ignored."""
+        with tempfile.TemporaryDirectory() as d:
+            want = Path(d) / "custom.lock"
+            envf = Path(d) / "bot.env"
+            envf.write_text("RKD_BOT_LOCK={}\n".format(want), encoding="utf-8")
+            with mock.patch.dict(os.environ, {}, clear=False):
+                os.environ.pop("RKD_BOT_LOCK", None)
+                main.load_env_file(envf)
+                f = main.take_lock()
+                try:
+                    self.assertIsNotNone(f)
+                    self.assertEqual(Path(f.name), want)
+                    self.assertTrue(want.exists())
+                finally:
+                    f.close()
 
     def test_main_refuses_without_token(self):
         old = dict(os.environ)
