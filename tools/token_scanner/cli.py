@@ -66,29 +66,32 @@ class FixtureApi:
     def __init__(self, d):
         self.d = Path(d)
 
-    def _load(self, name):
+    def _load(self, name, mint=None):
         p = self.d / (name + ".json")
         if not p.exists():
             raise client.ApiError("fixture {} missing".format(p.name))
         snap = json.loads(p.read_text(encoding="utf-8"))
         if "error" in snap:
             raise getattr(client, snap["error"]["type"])(snap["error"]["message"])
+        req = snap.get("request")
+        if mint and req is not None and mint not in json.dumps(req):
+            raise client.ApiError("fixture {} was recorded for another mint".format(p.name))
         return {"response": snap["response"], "fetched_at": snap["fetched_at"], "raw_path": str(p), "reused": False}
 
     def pairs(self, mint):
-        return self._load("pairs")
+        return self._load("pairs", mint)
 
     def account(self, mint):
-        return self._load("account")
+        return self._load("account", mint)
 
     def largest(self, mint):
-        return self._load("largest")
+        return self._load("largest", mint)
 
     def owners(self, accounts):
         return self._load("owners")
 
     def first_page(self, mint):
-        return self._load("first_page")
+        return self._load("first_page", mint)
 
 
 def scan(mint, api, now_s, launch=True):

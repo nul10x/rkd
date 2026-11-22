@@ -213,5 +213,63 @@ class FailurePathTest(unittest.TestCase):
             os.environ.pop("RKD_SCANNER_DAILY_BUDGET", None)
 
 
+class ValidatorReportTest(unittest.TestCase):
+    """Regressions for Validator report KR-000043 (B1, N1, N2) on master 6bbdeca."""
+
+    def _case(self, mutate):
+        d = tempfile.mkdtemp()
+        for f in (FX / "graduate").iterdir():
+            (Path(d) / f.name).write_text(f.read_text(encoding="utf-8"), encoding="utf-8")
+        mutate(Path(d))
+        return d
+
+    def _check_venues_unknown(self, d):
+        code, out, _, _ = run(GRAD, d)
+        r = json.loads(out)
+        codes = [f["code"] for f in r["risk_flags"]]
+        self.assertNotIn("top1_holder_concentration", codes)
+        self.assertNotIn("top10_holder_concentration", codes)
+        h = r["holders"]
+        self.assertFalse(h["venues_known"])
+        self.assertIsNone(h["venue_pct"])
+        self.assertIsNone(h["top1_holder_pct_excl_venues"])
+        self.assertAlmostEqual(h["top1_pct_incl_venues"], 13.71, places=2)  # the pool, reported as an account
+        self.assertIn("holder_venues", [m["field"] for m in r["missing"]])
+        _, text, _, _ = run(GRAD, d, "--text")
+        self.assertNotIn("0.00%", text)
+        self.assertNotIn("non-venue wallet", text)
+        self.assertIn("venues unknown", text)
+
+    def test_b1_no_pairs_listed(self):
+        def empty(d):
+            snap = json.loads((d / "pairs.json").read_text(encoding="utf-8"))
+            snap["response"] = []
+            (d / "pairs.json").write_text(json.dumps(snap), encoding="utf-8")
+        self._check_venues_unknown(self._case(empty))
+
+    def test_b1_pairs_fetch_failed(self):
+        self._check_venues_unknown(self._case(lambda d: (d / "pairs.json").unlink()))
+
+    def test_b1_listed_pairs_unchanged(self):
+        code, r = report(GRAD, "graduate")
+        self.assertTrue(r["holders"]["venues_known"])
+        self.assertAlmostEqual(r["holders"]["venue_pct"], 13.71, places=2)
+
+    def test_n1_block0_wording_says_received(self):
+        code, r = report(GRAD, "graduate")
+        f = next(f for f in r["risk_flags"] if f["code"] == "block0_buyers")
+        self.assertIn("received", f["text"])
+        self.assertNotIn("bought", f["text"])
+
+    def test_n2_fixture_for_another_mint_is_rejected(self):
+        code, out, _, _ = run(CURVE, "graduate")
+        r = json.loads(out)
+        self.assertIsNone(r["permissions"])
+        self.assertIsNone(r["holders"])
+        reasons = {m["field"]: m["reason"] for m in r["missing"]}
+        self.assertIn("another mint", reasons["mint"])
+        self.assertIn("another mint", reasons["market"])
+
+
 if __name__ == "__main__":
     unittest.main()

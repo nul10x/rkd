@@ -8,7 +8,7 @@ import re
 from research.study3_parse import block0, fee_payer, ordered
 
 TOOL = "token_scanner"
-VERSION = "0.1.0"
+VERSION = "0.1.1"
 FINDINGS = ["KR-000038", "KR-000026", "KR-000004", "KR-000015"]
 DISCLAIMER = "Measured facts and labelled risk flags only. Not a rating, not a safety verdict, not advice."
 
@@ -208,13 +208,18 @@ def _flag(code, cls, text, evidence):
 # ---------- holders (getTokenLargestAccounts + getMultipleAccounts) ----------
 
 def holders(largest, owner_accts, supply_raw, pair_addresses):
-    """Concentration with and without venues (pool or curve accounts). Unresolved owners stay unknown."""
+    """Concentration with and without venues (pool or curve accounts). Unresolved owners stay unknown.
+
+    Venues come only from listed pair addresses. With no listed pair (none listed, or the pairs fetch
+    failed) venues are unknown: the pool or curve may be among the largest accounts, so venue share and
+    concentration excluding venues are not computed and no concentration flag is raised."""
     missing, flags = [], []
     if largest is None:
         return None, flags, [{"field": "holders", "reason": "largest accounts not fetched"}]
     if not supply_raw:
         return None, flags, [{"field": "holders", "reason": "supply unknown"}]
-    venues = {a: d for a, d in pair_addresses.items() if a}
+    venues = {a: d for a, d in (pair_addresses or {}).items() if a}
+    venues_known = bool(venues)
     rows = []
     for i, a in enumerate(largest):
         o = owner_accts[i] if owner_accts and i < len(owner_accts) else None
@@ -222,7 +227,8 @@ def holders(largest, owner_accts, supply_raw, pair_addresses):
         if o and isinstance(o.get("data"), dict):
             owner = ((o["data"].get("parsed") or {}).get("info") or {}).get("owner")
         amt = int(a.get("amount") or 0)
-        kind = "unknown" if owner is None else ("venue:" + venues[owner]) if owner in venues else "holder"
+        kind = ("unknown" if owner is None else ("venue:" + venues[owner]) if owner in venues
+                else "holder" if venues_known else "unclassified")
         rows.append({"token_account": a.get("address"), "owner": owner, "kind": kind,
                      "pct_supply": _pct(amt, supply_raw)})
     unresolved = sum(1 for r in rows if r["owner"] is None)
@@ -237,8 +243,14 @@ def holders(largest, owner_accts, supply_raw, pair_addresses):
         k = r["owner"] or ("?" + str(r["token_account"]))
         by_owner[k] = by_owner.get(k, 0.0) + r["pct_supply"]
     top = sorted(by_owner.values(), reverse=True)
+    if not venues_known:
+        missing.append({"field": "holder_venues", "reason": "venues unknown: DEX Screener lists no pair for this "
+                        "token (or the pairs fetch failed), so pool/curve accounts cannot be told apart from "
+                        "wallets; concentration excluding venues not computed, no concentration flags"})
+        venue_pct, top = None, []
     res = {
         "accounts_returned": len(rows),
+        "venues_known": venues_known,
         "top1_pct_incl_venues": rows[0]["pct_supply"] if rows else None,
         "top10_pct_incl_venues": round(sum(r["pct_supply"] for r in rows[:10]), 4) if rows else None,
         "venue_pct": venue_pct,
@@ -293,7 +305,7 @@ def launch_context(first_page, mint):
     if truncated:
         missing.append({"field": "block0", "reason": "100+ transactions in the creation slot; values are lower bounds"})
     if res["block0_buyers"]:
-        flags.append(_flag("block0_buyers", "fact", "{} wallets bought {:.2f}% of supply in the creation slot".format(
+        flags.append(_flag("block0_buyers", "fact", "{} wallets received {:.2f}% of supply (net) in the creation slot".format(
             res["block0_buyers"], res["block0_supply_share_pct"] or 0.0),
             {"slot": launch["slot"], "buyers": res["block0_buyers"], "share_pct": res["block0_supply_share_pct"]}))
     if res["same_slot_graduation"]:
@@ -394,9 +406,14 @@ def render_text(r, limit=3900):
     if h:
         def pc(x):
             return "unknown" if x is None else "{:.2f}%".format(x)
-        L += ["", "**Holders** (largest {} accounts): top 1 wallet {}, top 10 wallets {} excluding pools/curve; "
-              "pools/curve hold {}".format(h["accounts_returned"], pc(h["top1_holder_pct_excl_venues"]),
-                                          pc(h["top10_holders_pct_excl_venues"]), pc(h["venue_pct"]))]
+        if h.get("venues_known", True):
+            L += ["", "**Holders** (largest {} accounts): top 1 wallet {}, top 10 wallets {} excluding pools/curve; "
+                  "pools/curve hold {}".format(h["accounts_returned"], pc(h["top1_holder_pct_excl_venues"]),
+                                              pc(h["top10_holders_pct_excl_venues"]), pc(h["venue_pct"]))]
+        else:
+            L += ["", "**Holders** (largest {} accounts): top 1 account {}, top 10 accounts {}, pools/curve "
+                  "included; venues unknown (no listed pair), so no wallet concentration is computed".format(
+                      h["accounts_returned"], pc(h["top1_pct_incl_venues"]), pc(h["top10_pct_incl_venues"]))]
     lc = r.get("launch_context")
     if lc:
         L += ["", "**Launch context** (KR-000038, association only)"]
@@ -404,7 +421,7 @@ def render_text(r, limit=3900):
             L.append("Graduated (DEX Screener lists a PumpSwap pair): {}. Risk context, not quality.".format(
                 "yes" if lc["graduated_listing"] else "no"))
         if "block0_buyers" in lc:
-            L.append("Creation slot: {} buyers, {} of supply; graduated in same slot: {}{}".format(
+            L.append("Creation slot: {} net receivers, {} of supply; graduated in same slot: {}{}".format(
                 lc["block0_buyers"], "unknown" if lc["block0_supply_share_pct"] is None
                 else "{:.2f}%".format(lc["block0_supply_share_pct"]),
                 "yes" if lc["same_slot_graduation"] else "no", " (lower bound)" if lc["page_truncated"] else ""))

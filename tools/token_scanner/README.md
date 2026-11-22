@@ -1,6 +1,6 @@
 # token_scanner
 
-Version 0.1.0 · based on Logbook findings KR-000038 (historically_supported, n=415) and design KR-000026 ·
+Version 0.1.1 · based on Logbook findings KR-000038 (historically_supported, n=415) and design KR-000026 ·
 also uses KR-000004 (DEX Screener gaps) and KR-000015 (ratios are not validated screens).
 
 Measured facts and labelled risk flags for one Solana token. **Not a rating, not a safety verdict, not advice.**
@@ -76,6 +76,9 @@ Measured run (live, 2026-11-22, MacBook, Python 3.9.6): Pump.fun graduate `FiVRb
 ## Known limitations
 - Holder data covers only the largest accounts the RPC returns (20 seen); total holder count is unknown.
   For tokens with very many holders (e.g. USDC) Helius refuses `getTokenLargestAccounts`; holders are then missing.
+- When DEX Screener lists no pair (or the pairs fetch fails), venues are unknown: `venues_known` is false,
+  venue share and wallet concentration are not computed, and no concentration flag is raised. Only the
+  largest-account shares (pools/curve included) are shown. This is common for dead or unlisted Pump.fun tokens.
 - Venues are found only by matching listed pair addresses. Pools that DEX Screener doesn't list, lockers,
   CEX wallets and other program accounts count as ordinary holders.
 - Block-0 counts mix dev bundles with independent snipers (no funding-link test yet). If the creation slot
@@ -87,4 +90,6 @@ Measured run (live, 2026-11-22, MacBook, Python 3.9.6): Pump.fun graduate `FiVRb
 - One chain (Solana). No history: each scan is a snapshot; snapshots are kept in `data/raw/*/live/`.
 
 ## Version history
+- 0.1.1 (2026-11-22): Validator report KR-000043: venues unknown when no pair is listed (B1); creation-slot
+  wording 'received (net)' (N1); fixtures checked against the requested mint (N2).
 - 0.1.0 (2026-11-22): first version. Adds `collectors/client.py` `live()`.
