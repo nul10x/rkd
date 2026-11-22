@@ -16,6 +16,9 @@ Read-only: no trading, no wallets.
 - Inputs are validated as base58 addresses before anything runs.
 - The token is read from a key file named in the env file. It is never in the repo, the Logbook or logs.
 - A lock file (`~/.rkd/bot.lock`) makes a second copy exit, so replies never double.
+- Tool processes get the bot's environment minus `DISCORD_BOT_TOKEN` and `DISCORD_BOT_TOKEN_FILE`.
+- Failure details (provider error bodies, local paths, stderr) never go to the channel. The channel gets
+  a short status line; the caller gets the details privately (ephemeral), and the bot log keeps them.
 
 ## Setup (macOS)
 1. Discord Developer Portal → New Application → Bot → copy the token. Under OAuth2 → URL Generator pick
@@ -41,4 +44,5 @@ input, defer-then-follow-up, one-at-a-time, a real child process on recorded fix
 env and key files, the single-instance lock. The live Discord connection is checked by hand once per release.
 
 ## Version history
+- 0.1.1 (2026-11-22): bot token kept out of tool processes; failure details private (Security Reviewer, 2 Low).
 - 0.1.0 (2026-11-22): `/scan`, `/status`.

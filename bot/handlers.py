@@ -47,11 +47,21 @@ class Config:
         return bool(roles & self.allowed_roles)
 
 
+BOT_ONLY_SECRETS = ("DISCORD_BOT_TOKEN", "DISCORD_BOT_TOKEN_FILE")
+
+
+def child_env(base=None):
+    """Environment for tool processes: everything except the bot's own secrets (tools never need them).
+    HELIUS_API_KEY stays, because the scanner reads it."""
+    base = os.environ if base is None else base
+    return {k: v for k, v in base.items() if k not in BOT_ONLY_SECRETS}
+
+
 async def run_scanner(mint, timeout=SCAN_TIMEOUT_S, env=None, argv=None):
     """Run the scanner CLI in a subprocess. Returns (exit_code, stdout, stderr); exit_code None on timeout."""
     argv = argv or [sys.executable, "-m", "tools.token_scanner.cli", mint, "--text"]
     proc = await asyncio.create_subprocess_exec(
-        *argv, cwd=str(ROOT), env=env,
+        *argv, cwd=str(ROOT), env=child_env() if env is None else child_env(env),
         stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
     try:
         out, err = await asyncio.wait_for(proc.communicate(), timeout)
@@ -101,26 +111,43 @@ def split_message(text, limit=DISCORD_LIMIT, max_parts=MAX_MESSAGES):
 
 
 def format_result(mint, code, out, err):
-    """Map the tool's exit code to a message. Never invent content: failures say what failed.
-    Returns a list of Discord-sized messages."""
+    """Public messages for the channel. Never invent content. Failure details (provider error bodies,
+    local paths, stderr) never go to the channel: see private_detail() and the bot log."""
     if code == 0 and out.strip():
         text = out.strip()
     elif code == 2:
         text = "Not a valid Solana address: `{}`".format(mint[:60])
     elif code == 3:
-        reasons = failure_reasons(out) or ["no reason reported"]
-        text = "Scan of `{}` fetched nothing (all sources failed or are paused):\n{}".format(
-            mint, "\n".join("- " + r[:300] for r in reasons[:10]))
+        text = ("Scan of `{}` fetched nothing (all sources failed or are paused). "
+                "The reasons were sent to you privately.".format(mint))
     elif code is None:
-        text = "Scan of `{}` stopped: {}.".format(mint, err.strip())
+        text = "Scan of `{}` stopped (timeout). Details were sent to you privately and are in the bot log.".format(mint)
     else:
-        last = err.strip().splitlines()[-1:] or ["no error output"]
-        text = "Scan of `{}` failed (exit {}): {}".format(mint, code, last[0][:500])
+        text = "Scan of `{}` failed (exit {}). Details were sent to you privately and are in the bot log.".format(
+            mint, code)
     return split_message(text)
 
 
+def private_detail(code, out, err):
+    """Detail for the caller only (ephemeral), or [] when the public message says everything."""
+    if code == 3:
+        reasons = failure_reasons(out) or ["no reason reported"]
+        return split_message("\n".join("- " + r[:300] for r in reasons[:10]))
+    if code is None:
+        return split_message("Stopped: {}.".format(err.strip()[:500]))
+    if code not in (0, 2):
+        last = err.strip().splitlines()[-1:] or ["no error output"]
+        return split_message("Exit {}: {}".format(code, last[0][:500]))
+    return []
+
+
+def log_failure(mint, code, err):
+    if code not in (0, 2):
+        print("scan {} exit {}:\n{}".format(mint, code, err.strip()[-4000:]), file=sys.stderr, flush=True)
+
+
 async def handle_scan(interaction, mint, cfg, runner=run_scanner, send_text=None):
-    """/scan <mint>. interaction needs .user, .response.defer(ephemeral=..), .followup.send(..)."""
+    """/scan <mint>. interaction needs .user, .response.defer(..), .followup.send(text, ephemeral=..)."""
     if not cfg.allowed(interaction.user):
         await interaction.response.send_message("You are not on this bot's allow-list.", ephemeral=True)
         return "denied"
@@ -133,12 +160,15 @@ async def handle_scan(interaction, mint, cfg, runner=run_scanner, send_text=None
     busy = lock.locked()
     async with lock:
         code, out, err = await runner(mint)
+    log_failure(mint, code, err)
     parts = format_result(mint, code, out, err)
     if busy:
         parts = split_message("(waited for an earlier scan to finish)\n" + "\n".join(parts))
     send = send_text or interaction.followup.send
-    for part in parts:
+    for part in parts:  # the first follow-up replaces the public "thinking" message
         await send(part)
+    for part in private_detail(code, out, err):
+        await send(part, ephemeral=True)
     return "ok" if code == 0 else "failed"
 
 
