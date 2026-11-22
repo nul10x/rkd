@@ -1,11 +1,11 @@
-# Paper fill spec v2.1 (Researcher to Builder, 2026-11-23)
+# Paper fill spec v2.2 (Researcher to Builder, 2026-11-23)
 
 Adds measured inputs to `docs/PAPER_TRADING_PLAN.md` (Validator, KR-000042). Evidence: KR-000058 (Study 6),
-KR-000059 (costs). v2 addressed Validator findings S1-S5 (KR-000061). v2.1 addresses the spec items in KR-000062
-(B4, H2, M2, M3, buy gap). **Not cleared for fill code until Validator says so.**
+KR-000059 (costs). v2 addressed Validator findings S1-S5 (KR-000061). v2.1 addressed the spec items in KR-000062
+(B4, H2, M2, M3, buy gap). v2.2 addresses KR-000063 (min-out timing, exit attempt limit). **Not cleared for fill code until Validator says so.**
 
-**Who owns what (S5).** `docs/PAPER_ENGINE_ARCHITECTURE.md` v3 (branch `docs/paper-engine-architecture`, latest
-Validator-cleared commit; last reviewed 8578f0f, with fixes pending)
+**Who owns what (S5).** `docs/PAPER_ENGINE_ARCHITECTURE.md` ("the guide", branch `docs/paper-engine-architecture`;
+not cleared yet, and this line gets its exact commit hash once Validator clears it)
 owns **fill order**: arrival, coverage, same-slot handling, exits, own impact and statuses (sections 3.2-3.5).
 This spec owns **fees, cost and delay scenarios, and parsing**. If they appear to conflict on fill order, the guide wins.
 
@@ -50,7 +50,7 @@ version in `strategy_run`. This table comes from the docs page and has **not bee
 
 ## 3. Fill order and cost inputs
 
-Fill order is **defined only in guide v3**, and is not restated here:
+Fill order is **defined only in the guide**, and is not restated here:
 
 - **S1, same slot (3.2):** try the order at all n + 1 insertion points, apply the rest of the slot, and keep the
   lowest wealth after the slot.
@@ -65,10 +65,14 @@ This spec supplies these inputs to that loop:
 
 1. **Delay:** `delay` in {1, 5, 25} slots, one run each. Arrival follows the guide's formula.
 2. **Fee:** venue, route and market cap at the fill, from section 2.
-3. **Slippage tolerance:** default min-out = computed impact + 1 percentage point.
+3. **Slippage tolerance:** default min-out = computed impact + 1 percentage point, computed from the **last state visible
+   when the attempt is created**, never the arrival state, and recomputed for each retry. An adverse move can then revert.
 4. **Non-price failure:** `p_fail` scenarios **0 / 6.22 / 30 / 58.43%**, drawn with the guide's seeded hash. A failure
    pays the network fee. **Entries:** at most one retry, with a fresh delay. **Exits:** retry with a fresh delay, paying
-   the network fee each attempt, until `filled`, `blocked` or `unresolved`. A failed exit never waits for a recovery.
+   the network fee each attempt, until `filled`, `blocked` or `unresolved`. Make **no attempt while the venue cannot accept
+   a sell** (for example, waiting for Migrate). After `max_exit_attempts` failed attempts the position is `unresolved` at
+   worst case. The default of 5 is an unmeasured assumption, is part of the hashed config, and is reported with a
+   sensitivity at 2 and 20.
 5. **Sandwich:** section 4.
 
 ## 4. Sandwich scenario
@@ -107,8 +111,10 @@ These add to guide section 3.7.
 8. Fee tier boundaries select the right row (419.99, 420, 98,240 SOL).
 9. A freeze by the token's authority after entry returns `blocked` at value 0.
 10. The same run twice gives an identical canonical dump.
-11. A failed exit retries with a fresh delay and pays the network fee each time, until `filled`, `blocked` or `unresolved`.
+11. A failed exit retries with a fresh delay and recomputed min-out, paying the network fee each time. It stops at `filled`,
+    `blocked`, or `unresolved` after `max_exit_attempts`. No attempt or fee occurs while the venue cannot accept a sell.
 12. A token with `base_supply` different from 1e15 selects its fee tier from the formula in section 2.
+13. A price move between attempt creation and arrival that exceeds the tolerance reverts the swap.
 
 ## 7. Not measured yet
 
