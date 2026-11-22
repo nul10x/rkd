@@ -1,6 +1,6 @@
 # Risk signals for the scanner and bots (Researcher → Builder)
 
-Version 1, 2026-11-22. Source of truth is the Logbook; every number below is copied from the cited record, which
+Version 2, 2026-11-22 (v1: 7f864cf). v2 changes: the freeze flag applies to every mint (the 30-day rule was a study sampling rule, not an exemption); quote-asset allowlist named; study 5 primary rates added (KR-000050). Source of truth is the Logbook; every number below is copied from the cited record, which
 holds the method, n and limitations. Edge check (`rkd-edge-check`, team rule KR-000027) applied: none of these is a
 trading edge or a buy signal. They are risk context. Costs are not applicable because no return is claimed.
 
@@ -16,10 +16,10 @@ show the data timestamp, the source, n and the label. Absence of a flag means "n
 
 | Signal | Rule | Label | Evidence | Records |
 |---|---|---|---|---|
-| Freeze authority retained | mint `freezeAuthority` non-null | **fact** (capability) | Holder accounts can be frozen; a frozen holder cannot sell. Literature: 461 of 100,063 new Orca/Raydium/Meteora tokens (0.46%, CI 0.42–0.51%, 2025-H1) had the authority used on holders (lower bound). How often a retained authority is used: **being measured now (study 5)**. | KR-000022, KR-000046, KR-000047 |
+| Freeze authority retained | mint `freezeAuthority` non-null, on **every** mint (any age) | **fact** (capability) + measured rate (in-sample) | Holder accounts can be frozen; a frozen holder cannot sell. Study 5 (Raydium CPMM pools 2026-10-01..11-04, KR-000050, holdout pending): 248 of 3,366 new non-launchpad tokens kept it (7.4%, CI 6.5–8.3%); of 231 new ones, **47 froze holders within 7 days = 20.3% (CI 15.7–26.0%, lower bound)**; median first freeze 88 s after pool creation. Rates are measured on tokens up to 30 days old; for older tokens the use rate is not measured, so show the capability without a rate. | KR-000022, KR-000046, KR-000050 |
 | Freeze authority used | spl-token `freezeAccount` on this mint by the authority on an account it does not own | **fact** (event) | Confirmed honeypot behaviour. Pilot example: one new CPMM token froze 4 buyer accounts at +175 s to +1,478 s after its pool opened (n=1, example only). | KR-000048 |
-| Token-2022 sell-block capability | extension `transferHook` with a programId, `permanentDelegate` with a delegate, `defaultAccountState = frozen`, or `nonTransferable` | **fact** (capability) | Each can block or reverse a sale (primary docs). Prevalence on new tokens: being measured (study 5). Pilot: Pump.fun 0 of 100 mints had freeze or mint authority (metadata extensions only). | KR-000022, KR-000048 |
-| Known quote assets | USDC `EPjFWdd5…Dt1v`, USDT `Es9vMF…wNYB` retain freeze authority by design | **fact** | Do not flag established stablecoins as honeypots; flag only new mints (first tx within 30 days). | KR-000048 |
+| Token-2022 sell-block capability | extension `transferHook` with a programId, `permanentDelegate` with a delegate, `defaultAccountState = frozen`, or `nonTransferable` | **fact** (capability) | Each can block or reverse a sale (primary docs). Study 5 (KR-000050, 3,366 new non-launchpad CPMM tokens): transfer hook 0, default frozen 0, non-transferable 0 (each CI 0–0.11%), permanent delegate 6 (0.18%), transfer fee 75 (2.2%, capability only, not simulated). Pump.fun: 0 of 1,000 random 2026-11-11 mints had freeze or mint authority or any of these (CI 0–0.38%). | KR-000022, KR-000048 |
+| Quote-asset allowlist | exactly these mints: USDC `EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v`, USDT `Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB` | **fact** | Issuer-controlled stablecoins keep a freeze authority by design. Show it as info ("issuer can freeze: Circle/Tether"), not as a honeypot flag. No other exemption: mint age does **not** remove the freeze flag. WSOL has no freeze authority. | KR-000048 |
 | EVM tokens (e.g. Robinhood Chain) | buy-then-sell simulation on current state, plus static blocklist check | **hypothesis** for rates | Measured prevalence 10.7%–87.9% depending on definition; sell-reversion is 72.3% of trap mechanisms (CI 70.6–74.0%, n=2,629 operations); simulation misses blocklists. | KR-000045 |
 
 Base-rate note (KR-000045/046): where honeypots are rare (~0.5% on Solana), a probabilistic detector with 1.8% false
@@ -57,5 +57,5 @@ Market activity and bundle statistics in the first minutes rank highest in publi
 
 ## Planned updates
 
-- Study 5 (honeypot census + P(freeze used | freeze retained), 45 days of CPMM pools, holdout): adds measured rates to section 1.
+- Study 5 holdout (pools 2026-11-05..11-14): confirms or revises the 20.3% freeze-use rate.
 - Study 4 (dev funding of block-0 buyers): fills the third row of section 2.
