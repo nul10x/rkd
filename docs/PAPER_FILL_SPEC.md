@@ -1,9 +1,11 @@
-# Paper fill spec v2 (Researcher to Builder, 2026-11-23)
+# Paper fill spec v2.1 (Researcher to Builder, 2026-11-23)
 
 Adds measured inputs to `docs/PAPER_TRADING_PLAN.md` (Validator, KR-000042). Evidence: KR-000058 (Study 6),
-KR-000059 (costs). v2 fixes Validator findings S1-S5 (KR-000061).
+KR-000059 (costs). v2 addressed Validator findings S1-S5 (KR-000061). v2.1 addresses the spec items in KR-000062
+(B4, H2, M2, M3, buy gap). **Not cleared for fill code until Validator says so.**
 
-**Who owns what (S5).** `docs/PAPER_ENGINE_ARCHITECTURE.md` v3 (branch `docs/paper-engine-architecture` @ 8578f0f)
+**Who owns what (S5).** `docs/PAPER_ENGINE_ARCHITECTURE.md` v3 (branch `docs/paper-engine-architecture`, latest
+Validator-cleared commit; last reviewed 8578f0f, with fixes pending)
 owns **fill order**: arrival, coverage, same-slot handling, exits, own impact and statuses (sections 3.2-3.5).
 This spec owns **fees, cost and delay scenarios, and parsing**. If they appear to conflict on fill order, the guide wins.
 
@@ -40,7 +42,9 @@ Canonical PumpSwap, SOL-paired (total fee by market cap in SOL):
 | 19,650 | 0.850% | 63,860 | 0.475% | | |
 
 USDC-paired coins use a different table on the same page. Refuse them in v1 unless that table is added.
-Market cap = current price x 1 billion tokens. Re-check the page before each experiment and store the table
+Fee market cap = price from **effective reserves** x the event's **`base_supply`**, not x 1 billion (only 29.5% of cached
+events have supply within 0.1% of 1e15). With this formula the table matched event fee bps in 84.01% of 41,224 events
+since Oct 17 (Validator, KR-000062). The other 16% are unexplained, so fee results stay a scenario. Re-check the page before each experiment and store the table
 version in `strategy_run`. This table comes from the docs page and has **not been checked against on-chain fee tiers**
 (open in T-000012), so keep it a versioned scenario until it has been.
 
@@ -63,7 +67,8 @@ This spec supplies these inputs to that loop:
 2. **Fee:** venue, route and market cap at the fill, from section 2.
 3. **Slippage tolerance:** default min-out = computed impact + 1 percentage point.
 4. **Non-price failure:** `p_fail` scenarios **0 / 6.22 / 30 / 58.43%**, drawn with the guide's seeded hash. A failure
-   pays the network fee. At most one retry, with a fresh delay. A failed exit leaves the position open.
+   pays the network fee. **Entries:** at most one retry, with a fresh delay. **Exits:** retry with a fresh delay, paying
+   the network fee each attempt, until `filled`, `blocked` or `unresolved`. A failed exit never waits for a recovery.
 5. **Sandwich:** section 4.
 
 ## 4. Sandwich scenario
@@ -71,8 +76,8 @@ This spec supplies these inputs to that loop:
 Probability per swap from KR-000018 (Bitquery, per 10,000 Jupiter swaps on Pump.fun coins): <0.5% slippage 27,
 0.5-1% 17, 1-3% 8, 3-10% 44, 10-20% 87, 20-50% 148, >=50% 33. Vendor data, not reproduced by RKD.
 
-Loss per sandwich is **not measured**. Use a pessimistic loss equal to the unused slippage room
-(`limit - impact`), and report results with and without it.
+Loss per sandwich is **not measured**. Use a pessimistic loss equal to the room **from the actual fill to
+min-out**, measured after the same-slot insertion point is chosen. Report results with and without it.
 
 ## 5. Parsing notes
 
@@ -81,6 +86,8 @@ Loss per sandwich is **not measured**. Use a pessimistic loss equal to the unuse
   real quote and real token (u64) at 89. Event length varies (398 to 413 bytes seen), so read by offset and do not
   assert a length. Reference parser: `research/study6_delay.py`.
 - PumpSwap: effective quote reserves = quote vault + `virtual_quote_reserves`, which is **signed** (Pump docs).
+- PumpSwap buy input: `quote_amount_in` for buy and buy_v2, `user_quote_amount_in` for exact-quote and multi-hop. This
+  predicted 22,486 of 22,732 buys (98.92%) within 0.01%, for price only (Validator, KR-000062; replaces the 77.5% in KR-000057).
 - A completing v3 buy emits TradeEvent, CompleteEvent, then PostCompleteBuyEvent. The buyer's total is the first
   plus the third (secondary source, check against the Pump IDL).
 
@@ -90,8 +97,8 @@ These add to guide section 3.7.
 
 1. A fixture where constant-curve and event prices differ fills at the event price.
 2. Same-slot signal never fills on the signal's own trade. Truncating later events leaves earlier fills unchanged.
-3. **Same-slot rug:** buy 1 SOL into a 100/100 pool, fees 0, in the slot of a 99% liquidity removal. The result is the
-   buy-first wealth of 0.505 SOL, not a revert that costs only the network fee.
+3. **Same-slot rug:** buy 1 SOL into a 100/100 pool, fees 0, in the slot of a 99% liquidity removal. Buy-first wealth is
+   **0.505 SOL in `overlay`** and **0.4975 SOL in `history`**, never a revert that costs only the network fee.
 4. Output below min-out returns `failed` and charges only the network fee.
 5. Unknown reserves or a coverage gap: an entry returns `refused`, an exit returns `unresolved` at worst case value 0.
 6. **Own impact:** 50 units into a 100/100 pool in 50 slices returns 33.333 in total, the same as one order
@@ -100,10 +107,12 @@ These add to guide section 3.7.
 8. Fee tier boundaries select the right row (419.99, 420, 98,240 SOL).
 9. A freeze by the token's authority after entry returns `blocked` at value 0.
 10. The same run twice gives an identical canonical dump.
+11. A failed exit retries with a fresh delay and pays the network fee each time, until `filled`, `blocked` or `unresolved`.
+12. A token with `base_supply` different from 1e15 selects its fee tier from the formula in section 2.
 
 ## 7. Not measured yet
 
-- PumpSwap buy prediction gap: 22.5% of buys are unexplained (KR-000057), so PumpSwap buy fills are unproven.
+- PumpSwap fee tiers: 16% of events do not match the table (KR-000062). Fee amounts and rounding on buys are unproven.
 - Failure rate for a careful trader. The cached pages hold successful txs only.
 - Real signal-to-landing latency of our own setup, and sandwich loss size.
 - Why virtual reserves jump between trades on about 40% of traded mints. The engine does not need the cause,
