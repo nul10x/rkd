@@ -296,7 +296,7 @@ class RiskSignalsV1Test(unittest.TestCase):
         self.assertIsInstance(f["fetched_at"], (int, float))
         self.assertIn("can freeze holders", f["text"])
         self.assertIn("not a confirmed honeypot", f["text"])
-        self.assertIn("0.46%", f["context"])
+        self.assertNotIn("holdout pending", f["context"])  # v3: holdout done (KR-000051)
         self.assertIn("freeze_used", [m["field"] for m in r["missing"]])
 
     def test_v2_freeze_flagged_on_old_mint_without_rate(self):
