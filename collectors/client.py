@@ -2,6 +2,9 @@
 
 - Every successful response is cached as raw JSON under data/raw/<provider>/<sha256>.json.
   A cache hit makes no network call, so re-runs reproduce the numbers offline.
+- live() is the second path, for current state (price, liquidity, holders): it always fetches
+  (or reuses a snapshot younger than max_age_s) and keeps each response as a timestamped snapshot
+  under data/raw/<provider>/live/<UTC day>/. Same throttle, pauses and budget as cached().
 - Every network call is counted in the usage file (RKD_USAGE, default data/raw/usage.json) and
   checked against a hard budget. Rejected requests count too.
 - Throttle, held across processes through data/raw/throttle.sqlite: each provider has a minimum
@@ -38,6 +41,7 @@ DEFAULT_INTERVAL = 0.5
 # Pause after a rate limit when the server sends no Retry-After. MIN_PAUSE is a floor for both cases.
 DEFAULT_PAUSE = 900.0
 MIN_PAUSE = {"geckoterminal": 1800.0}
+MIN_RETRY_PAUSE = 60.0  # floor for any server-sent Retry-After
 LOCK_TIMEOUT = 900  # seconds a process waits for another one's throttle slot
 
 _now = time.time  # patched in tests
@@ -156,7 +160,8 @@ def _pause_seconds(provider, retry_after):
     floor = MIN_PAUSE.get(provider, 0.0)
     if retry_after is None:
         return max(DEFAULT_PAUSE, floor)
-    return max(float(retry_after), floor)
+    # A Retry-After of 0 or an HTTP date already in the past must still pause: floor at MIN_RETRY_PAUSE.
+    return max(float(retry_after), floor, MIN_RETRY_PAUSE)
 
 
 def _parse_retry_after(value):
@@ -236,20 +241,40 @@ def _reserve(provider):
         c.close()
 
 
+def _update_usage(fn):
+    """Read-modify-write the usage file under the same lock as _reserve, so concurrent processes
+    sharing one usage file never lose a counted call. fn(u, c) edits u in place."""
+    c = _db()
+    try:
+        c.execute("BEGIN IMMEDIATE")
+        u = _usage()
+        out = fn(u, c)
+        _save_usage(u)
+        c.execute("COMMIT")
+        return out
+    except BaseException:
+        if c.in_transaction:
+            c.execute("ROLLBACK")
+        raise
+    finally:
+        c.close()
+
+
+def _record_error(entry):
+    _update_usage(lambda u, c: u["errors"].append(entry))
+
+
 def _record_pause(provider, label, retry_after, extra=None):
     at = _now()
     rec = {"until": at + _pause_seconds(provider, retry_after), "at": at, "label": label,
            "retry_after": retry_after}
     rec.update(extra or {})
-    u = _usage()
-    u["paused"][provider] = rec
-    _save_usage(u)
-    c = _db()
-    try:
+
+    def apply(u, c):
+        u["paused"][provider] = rec
         c.execute("INSERT OR REPLACE INTO pause(provider,until,info) VALUES (?,?,?)",
                   (provider, rec["until"], json.dumps(rec)))
-    finally:
-        c.close()
+    _update_usage(apply)
     return rec
 
 
@@ -308,9 +333,7 @@ def _fetch(provider, url, body, label):
             rec = _record_pause(provider, label, ra)
             _logbook_pause(provider, rec["until"])
             raise RateLimited("{} HTTP 429 on {}; paused for {:.0f} s".format(provider, label, rec["until"] - rec["at"]))
-        u = _usage()
-        u["errors"].append({"provider": provider, "label": label, "http": e.code, "body": text})
-        _save_usage(u)
+        _record_error({"provider": provider, "label": label, "http": e.code, "body": text})
         raise ApiError("{} HTTP {} on {}: {}".format(provider, e.code, label, text))
     if isinstance(payload, dict) and payload.get("error"):
         err = payload["error"]
@@ -321,9 +344,7 @@ def _fetch(provider, url, body, label):
             _logbook_pause(provider, rec["until"])
             raise RateLimited("{} rate limit on {}; paused for {:.0f} s: {}".format(
                 provider, label, rec["until"] - rec["at"], msg))
-        u = _usage()
-        u["errors"].append({"provider": provider, "label": label, "rpc_error": msg})
-        _save_usage(u)
+        _record_error({"provider": provider, "label": label, "rpc_error": msg})
         raise ApiError("{} error on {}: {}".format(provider, label, msg))
     return payload
 
@@ -336,6 +357,65 @@ def cached(provider, key_obj, url, body, label):
     resp = _fetch(provider, url, body, label)
     _atomic_write_json(path, {"request": key_obj, "fetched_at": time.time(), "response": resp})
     return resp
+
+
+def _live_dir(provider, ts):
+    day = time.strftime("%Y-%m-%d", time.gmtime(ts))
+    return os.path.join(RAW, provider, "live", day)
+
+
+def live(provider, key_obj, url, body, label, max_age_s=0):
+    """Fresh fetch for current state (price, liquidity, holders, authorities). Never a forever-cache hit.
+
+    Every response is kept as a timestamped snapshot: RAW/<provider>/live/<UTC day>/<unix>_<sha12>.json
+    holding request, fetched_at and response. With max_age_s > 0 the newest snapshot of the same request
+    that is younger than max_age_s is reused (no network call), so repeated commands spare free limits.
+    The key_obj is what identifies the request; it must not contain secrets (the URL is never stored).
+    Returns {"response", "fetched_at", "raw_path", "reused"}.
+    """
+    h = hashlib.sha256(json.dumps(key_obj, sort_keys=True).encode()).hexdigest()[:12]
+    now = _now()
+    if max_age_s and max_age_s > 0:
+        best = None
+        for ts in (now, now - 86400):
+            d = _live_dir(provider, ts)
+            if not os.path.isdir(d):
+                continue
+            for name in os.listdir(d):
+                if not name.endswith("_" + h + ".json"):
+                    continue
+                try:
+                    t = int(name.split("_", 1)[0])
+                except ValueError:
+                    continue
+                if now - t <= max_age_s and (best is None or t > best[0]):
+                    best = (t, os.path.join(d, name))
+        if best:
+            with open(best[1], encoding="utf-8") as f:
+                snap = json.load(f)
+            return {"response": snap["response"], "fetched_at": snap["fetched_at"],
+                    "raw_path": best[1], "reused": True}
+    resp = _fetch(provider, url, body, label)
+    fetched = _now()
+    path = os.path.join(_live_dir(provider, fetched), "{}_{}.json".format(int(fetched), h))
+    _atomic_write_json(path, {"request": key_obj, "fetched_at": fetched, "response": resp})
+    return {"response": resp, "fetched_at": fetched, "raw_path": path, "reused": False}
+
+
+def helius_live(method, params, max_age_s=0):
+    """JSON-RPC on Helius, fresh (see live()). Result is under ["response"]["result"]."""
+    key = os.environ.get("HELIUS_API_KEY")
+    if not key:
+        raise ApiError("HELIUS_API_KEY is not set")
+    url = "https://mainnet.helius-rpc.com/?api-key=" + key
+    body = {"jsonrpc": "2.0", "id": 1, "method": method, "params": params}
+    return live("helius", {"method": method, "params": params}, url, body, method, max_age_s)
+
+
+def dexscreener_token_pairs_live(chain, token, max_age_s=0):
+    """GET /token-pairs/v1/{chain}/{token}: all pools of one token (published limit 300 req/min). Fresh."""
+    url = "https://api.dexscreener.com/token-pairs/v1/{}/{}".format(chain, token)
+    return live("dexscreener", {"token_pairs": [chain, token]}, url, None, "token-pairs/v1", max_age_s)
 
 
 def helius_rpc(method, params):

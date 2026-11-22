@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Copy to ~/Library/LaunchAgents/com.rkd.discordbot.plist, replace the @...@ values, then
+     launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.rkd.discordbot.plist
+     Secrets are not in this file: RKD_BOT_ENV_FILE points at a chmod-600 file of KEY=VALUE lines
+     whose *_FILE entries point at the key files. -->
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.rkd.discordbot</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>@VENV_PYTHON@</string><string>-m</string><string>bot.main</string>
+  </array>
+  <key>WorkingDirectory</key><string>@REPO@</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>RKD_BOT_ENV_FILE</key><string>@ENV_FILE@</string>
+    <key>RKD_RAW</key><string>@REPO@/data/raw</string>
+    <key>PYTHONUNBUFFERED</key><string>1</string>
+  </dict>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>
+  <key>ThrottleInterval</key><integer>60</integer>
+  <key>StandardOutPath</key><string>@LOG_DIR@/bot.log</string>
+  <key>StandardErrorPath</key><string>@LOG_DIR@/bot.log</string>
+</dict>
+</plist>

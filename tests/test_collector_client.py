@@ -308,3 +308,149 @@ class LogbookCountTest(ClientBase):
             self.responses = [{"x": 1}]
             self.ds(3)
         self.assertEqual(self.requests("dexscreener"), 0)
+
+
+class LiveTest(ClientBase):
+    def live(self, n=0, max_age_s=0):
+        return client.live("dexscreener", {"token_pairs": ["solana", str(n)]},
+                           "https://ds.invalid/live/%d" % n, None, "token-pairs/v1", max_age_s)
+
+    def test_live_always_fetches_and_keeps_timestamped_snapshots(self):
+        self.responses = [[{"priceUsd": "1"}], [{"priceUsd": "2"}]]
+        a = self.live()
+        self.clock.t += 5
+        b = self.live()
+        self.assertEqual([a["response"][0]["priceUsd"], b["response"][0]["priceUsd"]], ["1", "2"])
+        self.assertEqual(len(self.urls), 2)
+        self.assertFalse(a["reused"] or b["reused"])
+        self.assertNotEqual(a["raw_path"], b["raw_path"])
+        self.assertIn(os.path.join("dexscreener", "live"), a["raw_path"])
+        with open(b["raw_path"]) as f:
+            snap = json.load(f)
+        self.assertEqual(snap["fetched_at"], b["fetched_at"])
+        self.assertEqual(snap["request"], {"token_pairs": ["solana", "0"]})
+        self.assertEqual(self.usage()["calls"], 2)
+
+    def test_live_never_reads_or_writes_forever_cache(self):
+        self.responses = [[1], [2]]
+        self.ds(0)
+        self.live(0)
+        flat = [p for p in os.listdir(os.path.join(self.raw, "dexscreener")) if p.endswith(".json")]
+        self.assertEqual(len(flat), 1)  # only the cached() file
+
+    def test_max_age_reuses_recent_snapshot_only(self):
+        self.responses = [[{"v": 1}], [{"v": 2}]]
+        self.live(max_age_s=60)
+        self.clock.t += 30
+        r = self.live(max_age_s=60)
+        self.assertTrue(r["reused"])
+        self.assertEqual(r["response"], [{"v": 1}])
+        self.assertEqual(len(self.urls), 1)
+        self.clock.t += 61
+        r = self.live(max_age_s=60)
+        self.assertFalse(r["reused"])
+        self.assertEqual(r["response"], [{"v": 2}])
+
+    def test_live_respects_pause_and_budget(self):
+        self.responses = [http_error(429, "120")]
+        with self.assertRaises(client.RateLimited):
+            self.live()
+        with self.assertRaises(client.RateLimited):
+            self.live()
+        self.assertEqual(len(self.urls), 1)
+
+    def test_helius_live_needs_key_and_never_stores_it(self):
+        with mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("HELIUS_API_KEY", None)
+            with self.assertRaises(client.ApiError):
+                client.helius_live("getAccountInfo", ["x"])
+        self.responses = [{"jsonrpc": "2.0", "result": {"value": None}}]
+        with mock.patch.dict(os.environ, {"HELIUS_API_KEY": "SECRETKEY123"}):
+            r = client.helius_live("getAccountInfo", ["x"])
+        self.assertEqual(r["response"]["result"], {"value": None})
+        with open(r["raw_path"]) as f:
+            self.assertNotIn("SECRETKEY123", f.read())
+
+
+class ReviewFixesTest(ClientBase):
+    """Regressions for the Change Reviewer findings on build/token-scanner (2026-11-22)."""
+
+    def _lock_held(self):
+        c = __import__("sqlite3").connect(os.path.join(self.raw, "throttle.sqlite"), timeout=0, isolation_level=None)
+        try:
+            c.execute("BEGIN IMMEDIATE")
+            c.execute("ROLLBACK")
+            return False
+        except Exception:
+            return True
+        finally:
+            c.close()
+
+    def _watch_saves(self):
+        seen = []
+        real = client._save_usage
+
+        def save(u):
+            seen.append(self._lock_held())
+            real(u)
+        return seen, mock.patch.object(client, "_save_usage", save)
+
+    def test_review_2_error_and_pause_writes_hold_the_lock(self):
+        """Finding 2: error/pause paths wrote usage.json outside the throttle lock (lost counts)."""
+        seen, p = self._watch_saves()
+        with p:
+            self.responses = [http_error(500, body=b"boom")]
+            with self.assertRaises(client.ApiError):
+                self.ds(1)
+            self.responses = [{"jsonrpc": "2.0", "error": {"code": -32600, "message": "bad"}}]
+            with self.assertRaises(client.ApiError):
+                client.evm_rpc("eth_x", [], url="https://rpc.invalid")
+            self.responses = [http_error(429, "120")]
+            with self.assertRaises(client.RateLimited):
+                self.ds(2)
+        self.assertTrue(seen)
+        self.assertTrue(all(seen), seen)
+        u = self.usage()
+        self.assertEqual((u["calls"], len(u["errors"])), (3, 2))
+
+    def test_review_2_concurrent_count_is_not_lost(self):
+        """Finding 2: another process counts a call while our error path is between its read and write.
+        If our write is unlocked, it overwrites that count (old code: 1). Locked, the other process waits
+        for the lock and writes afterwards, so both calls stay counted (2)."""
+        self.responses = [http_error(500, body=b"boom")]
+        real_usage = client._usage
+        state = {"n": 0, "deferred": False}
+
+        def other_process_counts():
+            other = real_usage()
+            other["calls"] += 1
+            client._atomic_write_json(client.USAGE, other, indent=1)
+
+        def racing_usage():
+            u = real_usage()
+            state["n"] += 1
+            if state["n"] == 3:  # the error path's read
+                if self._lock_held():
+                    state["deferred"] = True  # blocked: it will write after we release the lock
+                else:
+                    other_process_counts()
+            return u
+        with mock.patch.object(client, "_usage", racing_usage):
+            with self.assertRaises(client.ApiError):
+                self.ds(1)
+        if state["deferred"]:
+            other_process_counts()
+        self.assertEqual(self.usage()["calls"], 2)
+
+    def test_review_4_past_retry_after_date_still_pauses(self):
+        """Finding 4: an HTTP-date Retry-After in the past gave a 0 s pause."""
+        when = email.utils.formatdate(self.clock.t - 600, usegmt=True)
+        self.responses = [http_error(429, when)]
+        with self.assertRaises(client.RateLimited):
+            self.ds()
+        self.assertGreaterEqual(client.paused_until("dexscreener") - self.clock.t, 60)
+        self.responses = [http_error(429, "0")]
+        self.clock.t += 61
+        with self.assertRaises(client.RateLimited):
+            self.ds(9)
+        self.assertGreaterEqual(client.paused_until("dexscreener") - self.clock.t, 60)
