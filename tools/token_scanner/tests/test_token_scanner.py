@@ -316,6 +316,7 @@ class RiskSignalsV1Test(unittest.TestCase):
         f = next(f for f in r["risk_flags"] if f["code"] == "freeze_authority_present")
         self.assertIn("mint age unknown, treated as new", f["text"])
         self.assertIsNone(f["fetched_at"])  # no source recorded: not invented
+        self.assertIn("(helius getAccountInfo time unknown;", ts.render_text(r))  # Validator N3
 
     def test_every_flag_has_label_and_records(self):
         for mint, case in ((GRAD, "graduate"), (CURVE, "curve"), (USDC, "usdc")):

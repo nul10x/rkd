@@ -465,8 +465,8 @@ def render_text(r, limit=3900):
         for f in r["risk_flags"]:
             src = ""
             if f.get("source"):
-                src = " ({}{}; {})".format(f["source"], " <t:{}:R>".format(int(f["fetched_at"]))
-                                           if f.get("fetched_at") else "", ", ".join(f.get("records") or []))
+                src = " ({} {}; {})".format(f["source"], "<t:{}:R>".format(int(f["fetched_at"]))
+                                            if f.get("fetched_at") else "time unknown", ", ".join(f.get("records") or []))
             L.append("- [{}] {}{}".format(f.get("label", f["class"]), f["text"], src))
             if f.get("context"):
                 L.append("  context: " + f["context"])
