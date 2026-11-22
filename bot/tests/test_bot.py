@@ -39,7 +39,10 @@ class Interaction:
     async def defer(self, thinking=False, ephemeral=False):
         self.log.append(("defer",))
 
-    async def send(self, text):
+    async def send(self, text, ephemeral=False):
+        if ephemeral:
+            self.log.append(("private", text))
+            return
         if len(text) > 2000:  # what Discord does: HTTP 400, code 50035
             raise RuntimeError("400 Bad Request (error code: 50035): content must be 2000 or fewer in length")
         self.log.append(("followup", text))
@@ -127,7 +130,8 @@ class HandlerTest(unittest.IsolatedAsyncioTestCase):
                                                     argv=[sys.executable, "-c", "import time; time.sleep(30)"])
         self.assertLess(asyncio.get_running_loop().time() - t, 10)
         self.assertIsNone(code)
-        self.assertIn("stopped: timed out", handlers.format_result(GRAD, code, out, err)[0])
+        self.assertIn("stopped (timeout)", handlers.format_result(GRAD, code, out, err)[0])
+        self.assertIn("timed out after 0.5 s", handlers.private_detail(code, out, err)[0])
 
 
 class FormatTest(unittest.TestCase):
@@ -135,6 +139,7 @@ class FormatTest(unittest.TestCase):
         self.assertIn("Not a valid", handlers.format_result("x", 2, "", "")[0])
         self.assertIn("fetched nothing", handlers.format_result(GRAD, 3, "", "all paused")[0])
         self.assertIn("failed (exit 1)", handlers.format_result(GRAD, 1, "", "Traceback\nKeyError: 'x'")[0])
+        self.assertIn("KeyError: 'x'", handlers.private_detail(1, "", "Traceback\nKeyError: 'x'")[0])
         parts = handlers.format_result(GRAD, 0, "a" * 9000, "")
         self.assertLessEqual(len(parts), handlers.MAX_MESSAGES)
         self.assertTrue(all(len(x) <= 2000 for x in parts))
@@ -152,14 +157,60 @@ class FormatTest(unittest.TestCase):
         """Regression (review finding 5): exit 3 posted the JSON tail with local raw paths."""
         rep = {"missing": [{"field": "market", "reason": "not fetched: RateLimited: dexscreener paused"}],
                "sources": [{"raw_path": "/Users/someone/data/raw/helius/live/x.json"}], "mint": GRAD}
-        msg = "\n".join(handlers.format_result(GRAD, 3, json.dumps(rep), ""))
+        msg = "\n".join(handlers.private_detail(3, json.dumps(rep), ""))
         self.assertIn("market: not fetched: RateLimited", msg)
         self.assertNotIn("/Users/", msg)
         self.assertNotIn("raw_path", msg)
         text = "**Scan** x\n\n**Missing or unreliable**\n- mint: fetch failed: boom\n\nSources: helius /Users/a"
-        msg = "\n".join(handlers.format_result(GRAD, 3, text, ""))
+        msg = "\n".join(handlers.private_detail(3, text, ""))
         self.assertIn("mint: fetch failed: boom", msg)
         self.assertNotIn("/Users/", msg)
+
+
+class SecurityReviewTest(unittest.IsolatedAsyncioTestCase):
+    """Regressions for the Security Reviewer's two Low findings on master 6bbdeca (2026-11-22)."""
+
+    async def test_sec_1_bot_token_not_passed_to_scanner_child(self):
+        probe = ("import os,json;print(json.dumps({k: k in os.environ for k in "
+                 "('DISCORD_BOT_TOKEN','DISCORD_BOT_TOKEN_FILE','HELIUS_API_KEY')}))")
+        with mock.patch.dict(os.environ, {"DISCORD_BOT_TOKEN": "tok", "DISCORD_BOT_TOKEN_FILE": "/x",
+                                          "HELIUS_API_KEY": "k"}):
+            code, out, err = await handlers.run_scanner(GRAD, argv=[sys.executable, "-c", probe])
+        self.assertEqual(code, 0, err)
+        self.assertEqual(json.loads(out), {"DISCORD_BOT_TOKEN": False, "DISCORD_BOT_TOKEN_FILE": False,
+                                           "HELIUS_API_KEY": True})
+
+    async def test_sec_2_failure_detail_never_posted_publicly(self):
+        secret_bits = ("/Users/someone/data/raw", "helius HTTP 401", "Traceback")
+
+        async def crash(m):
+            return 1, "", "Traceback (most recent call last):\n  File \"/Users/someone/data/raw/x.py\"\n" \
+                          "ApiError: helius HTTP 401 on getAccountInfo: {\"error\": \"bad key\"}"
+
+        async def nothing(m):
+            return 3, "**Scan** x\n\n**Missing or unreliable**\n- mint: fetch failed: helius HTTP 401 on " \
+                      "getAccountInfo: /Users/someone/data/raw\n", ""
+
+        async def slow(m):
+            return None, "", "timed out after 120 s; /Users/someone/data/raw"
+        c = cfg(DISCORD_ALLOWED_USER_IDS="1")
+        for runner in (crash, nothing, slow):
+            i = Interaction(User(1))
+            with mock.patch("sys.stderr", io.StringIO()):
+                await handlers.handle_scan(i, GRAD, c, runner)
+            public = "\n".join(e[1] for e in i.log if e[0] == "followup")
+            private = "\n".join(e[1] for e in i.log if e[0] == "private")
+            for bit in secret_bits:
+                self.assertNotIn(bit, public, (runner.__name__, public))
+            self.assertTrue(private, runner.__name__)  # the caller still gets the detail, privately
+
+    async def test_sec_2_crash_detail_goes_to_bot_log(self):
+        async def crash(m):
+            return 1, "", "Traceback\nKeyError: 'boom'"
+        log = io.StringIO()
+        with mock.patch("sys.stderr", log):
+            await handlers.handle_scan(Interaction(User(1)), GRAD, cfg(DISCORD_ALLOWED_USER_IDS="1"), crash)
+        self.assertIn("KeyError: 'boom'", log.getvalue())
 
 
 class StartupTest(unittest.TestCase):
