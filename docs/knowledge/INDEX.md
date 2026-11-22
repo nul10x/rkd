@@ -4,7 +4,7 @@ Generated from the Logbook by `python3 -m research.kb_index`. Do not edit by han
 `python3 -m ecosystem.cli get KR-xxxxxx`; search with `python3 -m ecosystem.cli search "<words>"`.
 Status ladder: unverified < hypothesis < under_investigation < historically_supported < validated (or rejected).
 
-Records: 48
+Records: 51
 
 ## 1. Blockchain and on-chain analytics
 
@@ -124,7 +124,10 @@ Records: 48
 | KR-000038 | report | historically_supported | 0.60 | 2026-11-21 | Study 3 holdout (launches 2026-11-09): block-0 buyer clusters among Pump.fun graduates replicate (89% vs 18%); 60% of graduates graduated in their creation slot; post-graduation ratios still not a runner screen |
 | KR-000039 | report | n/a | - | 2026-11-22 | Plan, study 4: were Pump.fun block-0 buyers funded by the deployer? Funding-graph test, graduates vs non-graduates (2026-11-11 + holdout 2026-11-09) |
 | KR-000040 | observation | unverified | 0.80 | 2026-11-22 | Study 4 pilot: system-transfer parsing misses program and wrapped-SOL funding; 33 of 45 block-0 buyer pages are full 100-tx pages |
-| KR-000041 | tool | n/a | - | 2026-11-22 | Tool token_scanner 0.1.1 + Discord bot /scan: market, holders excl. venues (unknown without listed pairs), mint permission facts, Pump.fun block-0 context |
+| KR-000041 | tool | n/a | - | 2026-11-22 | Tool token_scanner 0.2.0 + Discord bot /scan: labelled risk flags (RISK_SIGNALS v1), holders excl. venues, mint permission facts, Pump.fun block-0 context |
 | KR-000042 | report | n/a | - | 2026-11-22 | Validator audit: paper trading readiness for RKD (no strategy ready; engine benchmark first; master lacks the research code) |
 | KR-000043 | experiment | n/a | - | 2026-11-22 | Tool QA: token_scanner 0.1.0 offline (97 tests pass; bug B1: pool counted as top holder when DEX Screener lists no pair) |
 | KR-000044 | experiment | n/a | - | 2026-11-22 | Tool QA retest: token_scanner 0.1.1 (15cc08c) fixes B1, N1, N2 from KR-000043 |
+| KR-000049 | experiment | n/a | - | 2026-11-22 | Tool QA: token_scanner 0.2.0 (78e86fc) vs RISK_SIGNALS.md v1: no bugs; freeze scope rule matches spec; one spec question |
+| KR-000050 | report | under_investigation | 0.40 | 2026-11-22 | Study 5 primary (Raydium CPMM pools 2026-10-01..11-04): 7.4% of new non-launchpad tokens kept a freeze authority; 20.3% of those froze holders within 7 days; Pump.fun 0 of 1,000 |
+| KR-000051 | report | under_investigation | 0.50 | 2026-11-22 | Study 5 holdout (CPMM pools 2026-11-05..11-14): freeze-retained share replicates (6.7% vs 7.4%) but the freeze-use rate does not (7.4% vs 20.3%); weekly rate ranges 5-34% |
