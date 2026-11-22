@@ -317,8 +317,12 @@ class RiskSignalsV1Test(unittest.TestCase):
         d = self._with_freeze()
         _, out, _, _ = run(GRAD, d)  # mint age 10.4 days
         f = next(f for f in json.loads(out)["risk_flags"] if f["code"] == "freeze_authority_present")
-        for bit in ("in-sample", "KR-000050", "7.4%", "20.3%", "15.7-26.0%", "88 s"):
+        for bit in ("KR-000050", "KR-000051", "63/943", "47/231 = 20.3%", "4/54 = 7.4%", "Oct 1-Nov 4",
+                    "Nov 5-14", "weekly 5-34%", "does NOT replicate", "88 s"):
             self.assertIn(bit, f["context"])
+        self.assertIn("KR-000051", f["records"])
+        # v3: the use rate is never shown as one bare percentage
+        self.assertNotIn("froze holders within 7 days (20.3%", f["context"])
 
     def test_v2_allowlist_is_exact_and_info_only(self):
         acct = lambda: {"value": {"owner": ts.SPL_TOKEN, "data": {"parsed": {"type": "mint", "info": {
@@ -346,7 +350,7 @@ class RiskSignalsV1Test(unittest.TestCase):
         r = ts.build_report(GRAD, NOW, mint_acct=acct)
         f = next(f for f in r["risk_flags"] if f["code"] == "freeze_authority_present")
         self.assertIn("mint age unknown, treated as new", f["text"])
-        self.assertIn("20.3%", f["context"])
+        self.assertIn("4/54 = 7.4%", f["context"])
         self.assertIsNone(f["fetched_at"])  # no source recorded: not invented
         self.assertIn("(helius getAccountInfo time unknown;", ts.render_text(r))  # Validator N3
 

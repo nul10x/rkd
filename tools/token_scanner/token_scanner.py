@@ -8,9 +8,9 @@ import re
 from research.study3_parse import block0, fee_payer, ordered
 
 TOOL = "token_scanner"
-VERSION = "0.3.0"
-FINDINGS = ["KR-000038", "KR-000026", "KR-000004", "KR-000015", "KR-000022", "KR-000046", "KR-000048", "KR-000050"]
-RISK_SPEC = "docs/RISK_SIGNALS.md v2 (Researcher, 2026-11-22)"
+VERSION = "0.3.1"
+FINDINGS = ["KR-000038", "KR-000026", "KR-000004", "KR-000015", "KR-000022", "KR-000046", "KR-000048", "KR-000050", "KR-000051"]
+RISK_SPEC = "docs/RISK_SIGNALS.md v3 (Researcher, 2026-11-22)"
 DISCLAIMER = "Measured facts and labelled risk flags only. Not a rating, not a safety verdict, not advice."
 
 B58 = re.compile(r"^[1-9A-HJ-NP-Za-km-z]{32,44}$")
@@ -322,7 +322,7 @@ FLAG_ORDER = {"fact": 0, "heuristic": 1}
 
 # Labels and records per flag, from docs/RISK_SIGNALS.md v1. "source" is the read the flag comes from.
 SIGNALS = {
-    "freeze_authority_present": ("fact · capability", ["KR-000022", "KR-000046", "KR-000050"], "helius getAccountInfo"),
+    "freeze_authority_present": ("fact · capability", ["KR-000022", "KR-000046", "KR-000050", "KR-000051"], "helius getAccountInfo"),
     "mint_authority_present": ("fact · capability", ["KR-000026"], "helius getAccountInfo"),
     "transfer_hook": ("fact · capability", ["KR-000022", "KR-000048"], "helius getAccountInfo"),
     "permanent_delegate": ("fact · capability", ["KR-000022", "KR-000048"], "helius getAccountInfo"),
@@ -349,10 +349,11 @@ CONTEXT = {
 KNOWN_STABLES = {"EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v": ("Circle", "USDC"),
                  "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB": ("Tether", "USDT")}
 # Study 5 rates were measured on tokens up to 30 days old (KR-000050); older tokens get no rate.
-FREEZE_NEW_CONTEXT = ("in-sample, holdout pending (KR-000050, Raydium CPMM pools 2026-10-01..11-04): 248 of 3,366 "
-                      "new non-launchpad tokens kept a freeze authority (7.4%, CI 6.5-8.3%); of 231 new ones, 47 "
-                      "froze holders within 7 days (20.3%, CI 15.7-26.0%, lower bound); median first freeze 88 s "
-                      "after pool creation. Literature: 0.46% of new tokens had freeze abuse (KR-000046)")
+FREEZE_NEW_CONTEXT = ("Study 5, Raydium CPMM, new non-launchpad tokens: kept a freeze authority 248/3,366 = 7.4% "
+                      "(CI 6.5-8.3%, pools Oct 1-Nov 4, KR-000050) and 63/943 = 6.7% (CI 5.3-8.5%, holdout Nov 5-14, "
+                      "KR-000051), replicated. Used on holders within 7 days does NOT replicate as one number: "
+                      "47/231 = 20.3% (CI 15.7-26.0%, Oct 1-Nov 4) vs 4/54 = 7.4% (CI 2.9-17.6%, Nov 5-14); weekly "
+                      "5-34%. Most freezes came minutes after the pool opened (median 88 s), so check before any buy")
 FREEZE_OLD_CONTEXT = ("mint older than 30 days: how often a retained freeze authority is used is not measured for "
                       "older tokens (KR-000050 covers tokens up to 30 days old)")
 NEW_MINT_DAYS = 30

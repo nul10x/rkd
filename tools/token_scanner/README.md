@@ -1,6 +1,6 @@
 # token_scanner
 
-Version 0.3.0 · based on Logbook findings KR-000038 (historically_supported, n=415) and design KR-000026 ·
+Version 0.3.1 · based on Logbook findings KR-000038 (historically_supported, n=415) and design KR-000026 ·
 also uses KR-000004 (DEX Screener gaps) and KR-000015 (ratios are not validated screens).
 
 Measured facts and labelled risk flags for one Solana token. **Not a rating, not a safety verdict, not advice.**
@@ -64,14 +64,14 @@ Calls per scan:
 - **Ratios:** liquidity/MC and volume/MC, shown as descriptive only.
 - **Age:** from the creation transaction when read, else DEX Screener pair age (labelled as pair age).
 
-## Risk signals (docs/RISK_SIGNALS.md v2, Researcher, 2026-11-22)
+## Risk signals (docs/RISK_SIGNALS.md v3, Researcher, 2026-11-22)
 Every flag carries `label` (fact · capability, fact, fact whose meaning is a replicated association, or
 heuristic), `records` (Logbook ids), `source` (the read it comes from) and that read's `fetched_at`. Flags with
 published rates carry `context` with n and CI; in-sample rates are labelled as such. No flag means "none seen in the data read", never safe.
 
 | Spec signal | In 0.2.0 |
 |---|---|
-| Freeze authority retained | ✓ "can freeze holders" (capability, not a confirmed honeypot) on **every** mint of any age. Mints up to 30 days old (or of unknown age) get the study 5 in-sample rate (KR-000050: 7.4% keep it; 20.3% of those froze holders within 7 days, lower bound). Older mints get no rate (not measured). Only exception: the exact USDC/USDT allowlist, shown under `info` as "issuer can freeze: Circle/Tether". |
+| Freeze authority retained | ✓ "can freeze holders" (capability, not a confirmed honeypot) on **every** mint of any age. Mints up to 30 days old (or of unknown age) get the study 5 in-sample rate (kept: 7.4% and 6.7% on the holdout, replicated; used within 7 days: 20.3% vs 7.4% on the holdout, weekly 5-34%, shown as a range with dates and n, KR-000050/051). Older mints get no rate (not measured). Only exception: the exact USDC/USDT allowlist, shown under `info` as "issuer can freeze: Circle/Tether". |
 | Freeze authority used (event) | — not checked; reported in `missing` as `freeze_used` whenever the freeze flag is raised |
 | Token-2022 sell-block capabilities | ✓ transfer hook, permanent delegate, default-frozen, non-transferable (plus fee, pausable, close authority) |
 | Block-0 cluster, same-slot graduation | ✓ with KR-000036/38 rates as context |
@@ -105,6 +105,7 @@ Measured run (live, 2026-11-22, MacBook, Python 3.9.6): Pump.fun graduate `FiVRb
 - One chain (Solana). No history: each scan is a snapshot; snapshots are kept in `data/raw/*/live/`.
 
 ## Version history
+- 0.3.1 (2026-11-22): RISK_SIGNALS v3: freeze-use rate shown as the measured range with dates and n (KR-000051).
 - 0.3.0 (2026-11-22): RISK_SIGNALS v2: freeze authority flagged at any age (30-day exemption removed);
   USDC/USDT exact allowlist shown as `info` (replaces `not_flagged`); KR-000050 in-sample rate for new mints.
 - 0.2.0 (2026-11-22): risk signals v1 from docs/RISK_SIGNALS.md: labels, records, sources and timestamps on
