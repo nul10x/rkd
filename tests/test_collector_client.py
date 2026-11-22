@@ -308,3 +308,65 @@ class LogbookCountTest(ClientBase):
             self.responses = [{"x": 1}]
             self.ds(3)
         self.assertEqual(self.requests("dexscreener"), 0)
+
+
+class LiveTest(ClientBase):
+    def live(self, n=0, max_age_s=0):
+        return client.live("dexscreener", {"token_pairs": ["solana", str(n)]},
+                           "https://ds.invalid/live/%d" % n, None, "token-pairs/v1", max_age_s)
+
+    def test_live_always_fetches_and_keeps_timestamped_snapshots(self):
+        self.responses = [[{"priceUsd": "1"}], [{"priceUsd": "2"}]]
+        a = self.live()
+        self.clock.t += 5
+        b = self.live()
+        self.assertEqual([a["response"][0]["priceUsd"], b["response"][0]["priceUsd"]], ["1", "2"])
+        self.assertEqual(len(self.urls), 2)
+        self.assertFalse(a["reused"] or b["reused"])
+        self.assertNotEqual(a["raw_path"], b["raw_path"])
+        self.assertIn(os.path.join("dexscreener", "live"), a["raw_path"])
+        with open(b["raw_path"]) as f:
+            snap = json.load(f)
+        self.assertEqual(snap["fetched_at"], b["fetched_at"])
+        self.assertEqual(snap["request"], {"token_pairs": ["solana", "0"]})
+        self.assertEqual(self.usage()["calls"], 2)
+
+    def test_live_never_reads_or_writes_forever_cache(self):
+        self.responses = [[1], [2]]
+        self.ds(0)
+        self.live(0)
+        flat = [p for p in os.listdir(os.path.join(self.raw, "dexscreener")) if p.endswith(".json")]
+        self.assertEqual(len(flat), 1)  # only the cached() file
+
+    def test_max_age_reuses_recent_snapshot_only(self):
+        self.responses = [[{"v": 1}], [{"v": 2}]]
+        self.live(max_age_s=60)
+        self.clock.t += 30
+        r = self.live(max_age_s=60)
+        self.assertTrue(r["reused"])
+        self.assertEqual(r["response"], [{"v": 1}])
+        self.assertEqual(len(self.urls), 1)
+        self.clock.t += 61
+        r = self.live(max_age_s=60)
+        self.assertFalse(r["reused"])
+        self.assertEqual(r["response"], [{"v": 2}])
+
+    def test_live_respects_pause_and_budget(self):
+        self.responses = [http_error(429, "120")]
+        with self.assertRaises(client.RateLimited):
+            self.live()
+        with self.assertRaises(client.RateLimited):
+            self.live()
+        self.assertEqual(len(self.urls), 1)
+
+    def test_helius_live_needs_key_and_never_stores_it(self):
+        with mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("HELIUS_API_KEY", None)
+            with self.assertRaises(client.ApiError):
+                client.helius_live("getAccountInfo", ["x"])
+        self.responses = [{"jsonrpc": "2.0", "result": {"value": None}}]
+        with mock.patch.dict(os.environ, {"HELIUS_API_KEY": "SECRETKEY123"}):
+            r = client.helius_live("getAccountInfo", ["x"])
+        self.assertEqual(r["response"]["result"], {"value": None})
+        with open(r["raw_path"]) as f:
+            self.assertNotIn("SECRETKEY123", f.read())
