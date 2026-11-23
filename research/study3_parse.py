@@ -29,12 +29,21 @@ def ordered(txs):
 
 
 def block0(txs, launch):
+    return _block0(txs, launch)[0]
+
+
+def block0_buyers(txs, launch):
+    """{owner: raw tokens received} of block-0 buyers (study-3 rule), or None if the create tx is not in the page."""
+    return _block0(txs, launch)[1]
+
+
+def _block0(txs, launch):
     """block0_share (% of supply) bought in the create slot by owners other than deployer and curve,
     plus buyer count and whether the create tx was in the page. txs: mint txs, asc."""
     mint, dev, slot = launch["mint"], launch["deployer"], launch["slot"]
     create = next((e for e in txs if e["transaction"]["signatures"][0] == launch["signature"]), None)
     if create is None:
-        return {"create_found": False}
+        return {"create_found": False}, None
     curve = curve_owner(create, mint)
     net, senders, n_tx, curve_out = {}, set(), 0, 0
     for e in txs:
@@ -56,7 +65,7 @@ def block0(txs, launch):
                    for l in ((e.get("meta") or {}).get("logMessages") or []))
     return {"create_found": True, "curve_owner": curve, "block0_share": 100.0 * got / SUPPLY_RAW,
             "block0_buyers": len(buyers), "block0_txs": n_tx, "curve_out_share": 100.0 * curve_out / SUPPLY_RAW,
-            "graduated_in_block0": migrated}
+            "graduated_in_block0": migrated}, buyers
 
 
 def dev_exit(txs, launch, horizon):
