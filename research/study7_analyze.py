@@ -86,7 +86,7 @@ def token_metrics(l, txs, complete):
                 "sell_share": round(sv / vol, 4) if vol else None, "trades": i, "traders": len(users),
                 "peak_index": round(peak / LAUNCH_PRICE, 4), "drawdown_pct": round(100 * (1 - price / peak), 2),
                 "liq_over_mc": round((liq or 0) / (price * SUPPLY), 4),
-                "insider_sold_pct": round(100 * (sold["bundle"] + sold["sniper"]) / (bought["bundle"] + bought["sniper"]), 2)
+                "insider_sold_pct": round(min(100.0, 100 * (sold["bundle"] + sold["sniper"]) / (bought["bundle"] + bought["sniper"])), 2)
                 if bought["bundle"] + bought["sniper"] else None,
                 "dev_sold_pct": round(100 * sold["dev"] / bought["dev"], 2) if bought["dev"] else None}
     out["sniper_pct"] = round(100 * bought["sniper"] / SUPPLY, 3)
